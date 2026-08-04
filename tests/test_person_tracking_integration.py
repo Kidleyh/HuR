@@ -22,6 +22,10 @@ def test_real_video_tracking(tmp_path: Path) -> None:
     gvhmr_root = Path(os.environ["GVHMR_ROOT"]).expanduser() if os.environ.get("GVHMR_ROOT") else None
     weight_candidates = []
     video_candidates = []
+    if os.environ.get("YOLO_WEIGHTS"):
+        weight_candidates.append(Path(os.environ["YOLO_WEIGHTS"]).expanduser())
+    if os.environ.get("PERSON_TRACKING_TEST_VIDEO"):
+        video_candidates.append(Path(os.environ["PERSON_TRACKING_TEST_VIDEO"]).expanduser())
     if gvhmr_root:
         weight_candidates.append(gvhmr_root / "inputs/checkpoints/yolo/yolov8x.pt")
         video_candidates.append(gvhmr_root / "docs/example_video/tennis.mp4")
@@ -48,19 +52,38 @@ def test_real_video_tracking(tmp_path: Path) -> None:
     output_dir = tmp_path / video.stem
     result = tracker.track_video(str(video), str(output_dir), save_visualization=True)
 
-    for filename in ["detections.jsonl", "detections.csv", "tracks_summary.json", "tracked.mp4"]:
+    for filename in [
+        "detections.jsonl",
+        "detections.csv",
+        "raw_detections.csv",
+        "tracked_detections.csv",
+        "tracks_summary.json",
+        "tracked.mp4",
+    ]:
         assert (output_dir / filename).is_file()
     assert result.processing["processed_frames"] > 0
     lines = (output_dir / "detections.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == result.processing["processed_frames"]
     for line in lines:
         frame = json.loads(line)
-        for detection in frame["detections"]:
+        assert "raw_detections" in frame
+        assert "tracked_detections" in frame
+        raw_indices = {detection["detection_index"] for detection in frame["raw_detections"]}
+        for detection in frame["raw_detections"]:
+            assert detection["class_name"] == "person"
+            assert "track_id" not in detection
+        for detection in frame["tracked_detections"]:
             assert detection["class_name"] == "person"
             assert isinstance(detection["track_id"], int)
+            if detection["source_detection_index"] is not None:
+                assert detection["source_detection_index"] in raw_indices
             x1, y1, x2, y2 = detection["bbox_xyxy"]
             assert 0 <= x1 < x2 <= result.video.width
             assert 0 <= y1 < y2 <= result.video.height
+
+    summary = json.loads((output_dir / "tracks_summary.json").read_text(encoding="utf-8"))
+    assert summary["schema_version"] == "1.1"
+    assert "detection_summary" in summary
 
     capture = cv2.VideoCapture(str(output_dir / "tracked.mp4"))
     assert capture.isOpened()

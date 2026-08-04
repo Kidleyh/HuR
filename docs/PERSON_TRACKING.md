@@ -16,6 +16,10 @@ python -m pip install -r requirements-tracking.txt
 python scripts/check_tracking_env.py
 ```
 
+Use `--require-weights` and/or `--require-cuda` for strict deployment checks.
+The default check permits CPU mode and missing weights but always fails when a
+required Python dependency is unavailable.
+
 Without Conda, use `python3.10 -m venv .venv`, activate it, and run the same pip
 commands. Do not install into the global interpreter.
 
@@ -38,8 +42,10 @@ python scripts/run_person_tracking.py \
 ```
 
 For folders add `--recursive`; optional controls include `--max-videos`,
-`--overwrite`, `--no-half`, and `--no-save-visualization`. Supported extensions
+`--overwrite`, `--no-half`, `--no-save-raw-csv`, and `--no-save-visualization`. Supported extensions
 are mp4, mov, avi, mkv, and webm. A complete existing result is skipped by default.
+Recursive directory outputs preserve the relative input path, so `a/sample.mp4`
+and `b/sample.mp4` cannot overwrite each other.
 
 All ByteTrack values can be replaced by another `--tracker-config`, or overridden
 with `--track-high-thresh`, `--track-low-thresh`, `--new-track-thresh`,
@@ -47,23 +53,51 @@ with `--track-high-thresh`, `--track-low-thresh`, `--new-track-thresh`,
 
 ## Outputs and schema
 
-Each `<output-dir>/<video-stem>/` contains `detections.jsonl` (one row per frame,
-including empty frames), `detections.csv` (one row per tracked box),
-`tracks_summary.json`, and optionally `tracked.mp4` at source size and FPS.
+Each output contains `detections.jsonl`, `raw_detections.csv`,
+`tracked_detections.csv`, `detections.csv`, `tracks_summary.json`, and optionally
+`tracked.mp4`. `detections.csv` is a compatibility copy identical to
+`tracked_detections.csv`.
 
-Detection records contain integer track/class IDs, class name, confidence, clipped
-pixel `bbox_xyxy`, top-left-origin `bbox_xywh`, normalized xyxy, and area ratio.
-Schema version 1.0 statistics contain start/end, observed-frame count, global/span
-coverage, confidence/area means and medians, and maximum internal missing gap.
-Missing frames are not interpolated and tracks are not filtered. A failed video
-gets `error.json` and folder processing continues.
+**Raw detections** are direct YOLO person candidates and have a per-frame
+`detection_index`, but no identity. They support later human-presence and
+low-confidence analysis. **Tracked detections** are candidates successfully
+associated by ByteTrack; they have `track_id` and an optional
+`source_detection_index` pointing to the raw candidate. They support identity
+continuity and trajectory analysis.
+
+Schema 1.1 writes one JSON object per decoded frame, including empty frames:
+
+```json
+{
+  "frame_index": 1,
+  "timestamp_sec": 0.0625,
+  "raw_detections": [
+    {"detection_index": 0, "class_name": "person", "confidence": 0.18}
+  ],
+  "tracked_detections": []
+}
+```
+
+Full records also contain clipped pixel `bbox_xyxy`, top-left-origin `bbox_xywh`,
+normalized xyxy, and area ratio. The summary includes raw/tracked frame coverage,
+counts, untracked raw count, raw confidence statistics, and existing per-track
+coverage/gap statistics. Missing frames are not interpolated and tracks are not
+filtered.
+
+Files are completed in a temporary sibling directory and promoted only after
+successful inference, video encoding, and serialization. Failed reruns preserve
+previous complete outputs. Successful reruns remove stale module-generated files
+and `error.json`, while retaining unrelated user files.
 
 ## ByteTrack defaults
 
 Detection `conf=0.10` preserves candidates for the second association stage below
 `track_high_thresh=0.25`. Other defaults are `track_low_thresh=0.10`,
 `new_track_thresh=0.25`, `track_buffer=30`, `match_thresh=0.80`, and
-`fuse_score=true`. A fresh model/predictor per video prevents tracker-state leakage.
+`fuse_score=true`. YOLO loads once per tracker object and runs exactly one predict
+call per frame. A fresh `BYTETracker` is constructed for each video so IDs and
+Kalman state never leak between videos. A detector confidence above ByteTrack's
+high threshold emits a warning because low-score association becomes unavailable.
 
 ## CPU and common errors
 
@@ -75,6 +109,7 @@ Install `lapx>=0.5.2` if the `lap` import is missing.
 ## Limitations
 
 - Detection and tracking only; no completeness or main-person decision.
+- Raw detections are retained but no human-completeness score is computed.
 - No ViTPose, keypoints, GVHMR, SMPL/SMPL-X, physical score, or reward integration.
 - ByteTrack has no ReID and cannot eliminate ID switches in severe crossings.
 - Crowded scenes may later use BoT-SORT or ReID.

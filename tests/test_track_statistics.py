@@ -27,7 +27,7 @@ def test_track_statistics_with_missing_gaps() -> None:
         FrameDetections(
             frame_index=index,
             timestamp_sec=index / 10.0,
-            detections=[observation(1, confidence, area)],
+            tracked_detections=[observation(1, confidence, area)],
         )
         for index, confidence, area in zip(indices, confidences, areas)
     ]
@@ -54,7 +54,7 @@ def test_duplicate_identity_in_frame_uses_highest_confidence() -> None:
     frame = FrameDetections(
         frame_index=0,
         timestamp_sec=0.0,
-        detections=[observation(2, 0.4, 0.2), observation(2, 0.8, 0.4)],
+        tracked_detections=[observation(2, 0.4, 0.2), observation(2, 0.8, 0.4)],
     )
     track = compute_track_statistics([frame], total_video_frames=1)[0]
     assert track.num_observed_frames == 1

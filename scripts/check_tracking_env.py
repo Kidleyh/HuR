@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import importlib
+import argparse
 import logging
 import os
 import platform
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -19,12 +20,12 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 LOGGER = logging.getLogger("check_tracking_env")
 
 
-def _version(module_name: str) -> str:
+def _version(module_name: str) -> Tuple[str, bool]:
     try:
         module = importlib.import_module(module_name)
     except Exception as error:
-        return f"NOT AVAILABLE ({type(error).__name__}: {error})"
-    return str(getattr(module, "__version__", "unknown"))
+        return f"NOT AVAILABLE ({type(error).__name__}: {error})", False
+    return str(getattr(module, "__version__", "unknown")), True
 
 
 def _find_weights() -> Optional[Path]:
@@ -39,14 +40,29 @@ def _find_weights() -> Optional[Path]:
     return next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--require-weights", action="store_true")
+    parser.add_argument("--require-cuda", action="store_true")
+    args = parser.parse_args(argv)
+    ready = True
     LOGGER.info("Python version: %s", platform.python_version())
     LOGGER.info("Python executable: %s", sys.executable)
-    LOGGER.info("PyTorch version: %s", _version("torch"))
-    LOGGER.info("torchvision version: %s", _version("torchvision"))
-    LOGGER.info("Ultralytics version: %s", _version("ultralytics"))
-    LOGGER.info("OpenCV version: %s", _version("cv2"))
-    LOGGER.info("NumPy version: %s", _version("numpy"))
+    modules = [
+        ("PyTorch", "torch"),
+        ("torchvision", "torchvision"),
+        ("Ultralytics", "ultralytics"),
+        ("OpenCV", "cv2"),
+        ("NumPy", "numpy"),
+        ("PyYAML", "yaml"),
+        ("lap", "lap"),
+    ]
+    for label, module_name in modules:
+        version, available = _version(module_name)
+        LOGGER.info("%s version: %s", label, version)
+        ready = ready and available
+
+    cuda_available = False
     try:
         import torch
 
@@ -61,16 +77,23 @@ def main() -> int:
             LOGGER.info("Current CUDA device: none")
             LOGGER.info("GPU name: none")
     except Exception as error:
-        LOGGER.warning("CUDA inspection failed: %s", error)
-    try:
-        importlib.import_module("lap")
-        LOGGER.info("lap module importable: yes")
-    except Exception as error:
-        LOGGER.error("lap module importable: no (%s)", error)
+        LOGGER.error("CUDA inspection failed: %s", error)
+        ready = False
+    if args.require_cuda and not cuda_available:
+        LOGGER.error("CUDA is required but unavailable.")
+        ready = False
+
     weights = _find_weights()
     LOGGER.info("YOLO weights exist: %s", "yes" if weights else "no")
     LOGGER.info("YOLO weights path: %s", weights or "not found")
-    return 0
+    if weights is None:
+        if args.require_weights:
+            LOGGER.error("YOLO weights are required but were not found.")
+            ready = False
+        else:
+            LOGGER.warning("YOLO weights were not found; real inference is unavailable.")
+    LOGGER.info("Environment status: %s", "READY" if ready else "NOT READY")
+    return 0 if ready else 1
 
 
 if __name__ == "__main__":

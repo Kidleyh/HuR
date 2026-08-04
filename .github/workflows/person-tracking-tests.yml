@@ -1,0 +1,38 @@
+name: Person Tracking Tests
+
+on:
+  push:
+    paths:
+      - "astrolabe/scorers/video/person_tracking/**"
+      - "scripts/run_person_tracking.py"
+      - "scripts/check_tracking_env.py"
+      - "configs/bytetrack_person.yaml"
+      - "tests/test_person_tracking*.py"
+      - "tests/test_track_statistics.py"
+      - "requirements-tracking.txt"
+      - ".github/workflows/person-tracking-tests.yml"
+  pull_request:
+    paths:
+      - "astrolabe/scorers/video/person_tracking/**"
+      - "scripts/run_person_tracking.py"
+      - "scripts/check_tracking_env.py"
+      - "configs/bytetrack_person.yaml"
+      - "tests/**"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install CPU test environment
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install torch==2.6.0 torchvision==0.21.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements-tracking.txt
+      - name: Run tests without model weights
+        run: pytest -q -m "not integration"

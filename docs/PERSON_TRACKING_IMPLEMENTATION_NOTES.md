@@ -1,4 +1,4 @@
-# Codex 工作记录：人体检测与跟踪前处理
+# 人体检测与跟踪前处理实现记录
 
 ## 目标
 
@@ -19,7 +19,7 @@
 将新增以下独立模块：
 
 - `astrolabe/scorers/video/person_tracking/schemas.py`：检测、帧、视频及轨迹统计数据结构和合法性校验。
-- `astrolabe/scorers/video/person_tracking/tracker.py`：通过 Ultralytics YOLOv8x 和官方 `model.track(...)` 接口执行 person 检测与 ByteTrack。
+- `astrolabe/scorers/video/person_tracking/tracker.py`：每帧执行一次YOLO `predict`，保留raw person候选，再将同一结果传给独立ByteTrack实例。
 - `astrolabe/scorers/video/person_tracking/statistics.py`：计算轨迹覆盖率、置信度、框面积比例及最大连续缺失间隔。
 - `astrolabe/scorers/video/person_tracking/serialization.py`：写出 JSONL、CSV、summary JSON和逐视频错误报告。
 - `configs/bytetrack_person.yaml`：ByteTrack默认参数；检测阈值保持为0.10，以保留第二阶段关联所需的低分检测。
@@ -34,8 +34,8 @@
 - YOLO模型加载后根据 `model.names` 查找名称为 `person` 的类别，不盲目硬编码类别0。
 - 权重按CLI、`YOLO_WEIGHTS`、`GVHMR_ROOT`、项目内checkpoint的顺序查找。
 - 默认不联网下载；只有显式传入 `--allow-download` 才允许Ultralytics下载权重。
-- 每个视频使用一次完整的流式跟踪调用，并为新视频创建新的模型/预测器，避免跟踪状态跨视频污染。
-- `boxes.id is None`时输出空检测帧，不抛异常。
+- YOLO模型在前处理对象生命周期内只加载一次；每个视频创建新的`BYTETracker`，避免ID和卡尔曼状态污染。
+- raw detection与tracked detection分别保留，低分但未形成轨迹的人体候选不会丢失。
 - 所有坐标映射并裁剪到原视频范围，不插值缺失帧。
 - CPU模式自动关闭half precision；请求GPU但CUDA不可用时清晰报错。
 - 单视频失败写入 `<output_dir>/<video_stem>/error.json`，目录批处理继续执行。
@@ -46,12 +46,14 @@
 ```text
 <output_dir>/<video_stem>/
 ├── detections.jsonl
+├── raw_detections.csv
+├── tracked_detections.csv
 ├── detections.csv
 ├── tracks_summary.json
 └── tracked.mp4
 ```
 
-`detections.jsonl`每帧一行，包括没有激活轨迹的帧。`detections.csv`每个检测框一行。`tracks_summary.json`记录视频、检测器、跟踪器、运行信息和逐轨迹统计。`tracked.mp4`只用于人工检查，不作为后续算法输入。
+Schema 1.1的`detections.jsonl`每帧一行，同时包含`raw_detections`和`tracked_detections`。`detections.csv`是`tracked_detections.csv`的兼容副本。summary新增raw/tracked覆盖率、数量和未关联raw统计。输出先写临时目录，全部成功后再提升到正式目录。
 
 ## 环境
 
@@ -73,34 +75,34 @@
 ```bash
 python scripts/check_tracking_env.py
 pytest -q tests/test_person_tracking_schemas.py tests/test_track_statistics.py
+pytest -q -m "not integration"
+YOLO_WEIGHTS=checkpoints/yolo/yolov8x.pt \
+PERSON_TRACKING_TEST_VIDEO=/path/to/2.mp4 \
 pytest -q -m integration tests/test_person_tracking_integration.py
 ```
 
 结果：
 
-- 单元测试：15 passed。
-- 集成测试：1 skipped，原因是服务器未找到YOLOv8x权重。
+- 非集成测试：29 passed、1 skipped（严格缺权重分支因本机已有权重而跳过）。
+- 真实集成测试：1 passed。
 - Python编译检查：通过。
 - CLI帮助和缺失输入错误路径：通过。
 - `astrolabe/rewards.py`：无修改。
 
-真实smoke test尚未执行，因为当前未找到以下文件：
-
-- `checkpoints/yolo/yolov8x.pt`或其他约定位置的YOLOv8x权重；
-- `$GVHMR_ROOT/docs/example_video/tennis.mp4`、`docs/example_video/tennis.mp4`或`tests/assets/person_short.mp4`。
-
-补齐权重和视频后，应执行：
+标准GVHMR测试视频不存在，因此使用同一远程工作区中的真实跑步人物视频完成CPU smoke：
 
 ```bash
 conda activate phymotion-track
 python scripts/run_person_tracking.py \
-  --input "$GVHMR_ROOT/docs/example_video/tennis.mp4" \
+  --input /gemini/platform/public/aigc/human_guozz2/code/lyh/job/AnyFlow/assets/evaluation/example/videos/2.mp4 \
   --output-dir outputs/person_tracking_smoke \
-  --weights "$GVHMR_ROOT/inputs/checkpoints/yolo/yolov8x.pt" \
+  --weights checkpoints/yolo/yolov8x.pt \
   --tracker-config configs/bytetrack_person.yaml \
-  --device 0 --conf 0.10 --iou 0.70 --imgsz 640 \
-  --half --save-visualization --overwrite
+  --device cpu --conf 0.10 --iou 0.70 --imgsz 640 \
+  --no-half --save-visualization --overwrite
 ```
+
+结果：80帧、81个raw检测、80个tracked检测、1条轨迹，raw与tracked帧覆盖率均为1.0，运行20.59秒；1个未形成轨迹的raw detection被完整保留。
 
 ## 后续工作
 

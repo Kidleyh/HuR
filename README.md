@@ -12,6 +12,11 @@ Generating realistic human motion is a central yet unsolved challenge in video g
 <img src="./assets/teaser.jpg" alt="teaser image"/>
 </p>
 
+## Human Detection and Tracking Preprocessing
+
+The independent YOLOv8x + ByteTrack preprocessing pipeline is documented in
+[docs/PERSON_TRACKING.md](docs/PERSON_TRACKING.md).
+
 
 ## Pretrained Checkpoints and Data
 
@@ -244,4 +249,3 @@ If you find this work useful, please consider citing:
   year={2026}
 }
 ```
-

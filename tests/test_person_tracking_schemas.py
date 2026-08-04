@@ -4,10 +4,15 @@ import json
 
 import pytest
 
-from astrolabe.scorers.video.person_tracking.schemas import Detection, FrameDetections
+from astrolabe.scorers.video.person_tracking.schemas import (
+    FrameDetections,
+    RawDetection,
+    TrackedDetection,
+    VideoTrackingResult,
+)
 
 
-def make_detection(**overrides: object) -> Detection:
+def make_detection(**overrides: object) -> TrackedDetection:
     values = {
         "track_id": 3,
         "class_id": 0,
@@ -19,11 +24,11 @@ def make_detection(**overrides: object) -> Detection:
         "bbox_area_ratio": 0.12,
     }
     values.update(overrides)
-    return Detection(**values)  # type: ignore[arg-type]
+    return TrackedDetection(**values)  # type: ignore[arg-type]
 
 
 def test_from_xyxy_clips_and_normalizes_bbox() -> None:
-    detection = Detection.from_xyxy(
+    detection = TrackedDetection.from_xyxy(
         track_id=1,
         class_id=0,
         class_name="person",
@@ -39,14 +44,17 @@ def test_from_xyxy_clips_and_normalizes_bbox() -> None:
 
 
 def test_json_serialization_and_empty_frame() -> None:
-    frame = FrameDetections(frame_index=0, timestamp_sec=0.0, detections=[])
+    frame = FrameDetections(frame_index=0, timestamp_sec=0.0)
     assert json.loads(json.dumps(frame.to_dict())) == {
         "frame_index": 0,
         "timestamp_sec": 0.0,
-        "detections": [],
+        "raw_detections": [],
+        "tracked_detections": [],
     }
-    populated = FrameDetections(frame_index=1, timestamp_sec=0.04, detections=[make_detection()])
-    assert json.loads(json.dumps(populated.to_dict()))["detections"][0]["track_id"] == 3
+    populated = FrameDetections(
+        frame_index=1, timestamp_sec=0.04, tracked_detections=[make_detection()]
+    )
+    assert json.loads(json.dumps(populated.to_dict()))["tracked_detections"][0]["track_id"] == 3
 
 
 @pytest.mark.parametrize("confidence", [-0.01, 1.01, float("nan")])
@@ -73,3 +81,27 @@ def test_invalid_bbox(bbox: list[float]) -> None:
 def test_invalid_normalized_bbox() -> None:
     with pytest.raises(ValueError, match="normalized bbox"):
         make_detection(bbox_xyxy_normalized=[0.1, 0.2, 1.1, 0.9])
+
+
+def test_raw_detection_has_index_but_no_track_id() -> None:
+    raw = RawDetection.from_xyxy(
+        class_id=0,
+        class_name="person",
+        confidence=0.18,
+        bbox_xyxy=[1.0, 2.0, 10.0, 20.0],
+        image_width=20,
+        image_height=40,
+        detection_index=0,
+    )
+    payload = raw.to_dict()
+    assert payload["detection_index"] == 0
+    assert "track_id" not in payload
+
+
+@pytest.mark.parametrize("source_index", [None, 0, 4])
+def test_tracked_source_detection_index(source_index: int | None) -> None:
+    assert make_detection(source_detection_index=source_index).source_detection_index == source_index
+
+
+def test_schema_version_is_1_1() -> None:
+    assert VideoTrackingResult.__dataclass_fields__["schema_version"].default == "1.1"
