@@ -87,6 +87,9 @@ def test_real_video_tracking(tmp_path: Path) -> None:
 
     capture = cv2.VideoCapture(str(output_dir / "tracked.mp4"))
     assert capture.isOpened()
+    fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
+    codec = "".join(chr((fourcc >> (8 * index)) & 0xFF) for index in range(4)).lower()
+    assert codec in {"avc1", "h264"}
     visualized_frames = 0
     while True:
         ok, _ = capture.read()

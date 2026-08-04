@@ -53,6 +53,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         ("torchvision", "torchvision"),
         ("Ultralytics", "ultralytics"),
         ("OpenCV", "cv2"),
+        ("imageio-ffmpeg", "imageio_ffmpeg"),
         ("NumPy", "numpy"),
         ("PyYAML", "yaml"),
         ("lap", "lap"),

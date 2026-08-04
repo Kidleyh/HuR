@@ -55,7 +55,8 @@ with `--track-high-thresh`, `--track-low-thresh`, `--new-track-thresh`,
 
 Each output contains `detections.jsonl`, `raw_detections.csv`,
 `tracked_detections.csv`, `detections.csv`, `tracks_summary.json`, and optionally
-`tracked.mp4`. `detections.csv` is a compatibility copy identical to
+`tracked.mp4`. The visualization is encoded as H.264/yuv420p with faststart for
+browser and desktop-player compatibility. `detections.csv` is a compatibility copy identical to
 `tracked_detections.csv`.
 
 **Raw detections** are direct YOLO person candidates and have a per-frame

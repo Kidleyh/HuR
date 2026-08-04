@@ -102,7 +102,7 @@ python scripts/run_person_tracking.py \
   --no-half --save-visualization --overwrite
 ```
 
-结果：80帧、81个raw检测、80个tracked检测、1条轨迹，raw与tracked帧覆盖率均为1.0，运行20.59秒；1个未形成轨迹的raw detection被完整保留。
+结果：80帧、81个raw检测、80个tracked检测、1条轨迹，raw与tracked帧覆盖率均为1.0，运行20.59秒；1个未形成轨迹的raw detection被完整保留。后续复核发现OpenCV的FMP4输出在部分播放器中显示全绿，现已在原子发布前转码为H.264/yuv420p/faststart。
 
 ## 后续工作
 

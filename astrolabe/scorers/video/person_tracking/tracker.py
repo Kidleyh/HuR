@@ -6,6 +6,7 @@ import importlib.util
 import logging
 import math
 import os
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import cv2
+import imageio_ffmpeg
 import numpy as np
 import torch
 import ultralytics
@@ -356,6 +358,29 @@ class YOLOByteTrackPersonTracker:
             )
         writer.write(visualization)
 
+    @staticmethod
+    def _transcode_visualization(source: Path, destination: Path) -> None:
+        """Produce browser-compatible H.264/yuv420p output from OpenCV's intermediate video."""
+        command = [
+            imageio_ffmpeg.get_ffmpeg_exe(),
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(source),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(destination),
+        ]
+        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        if completed.returncode != 0 or not destination.is_file() or destination.stat().st_size == 0:
+            raise RuntimeError(f"H.264 visualization transcoding failed: {completed.stderr.strip()}")
+
     def track_video(
         self,
         video_path: str,
@@ -408,14 +433,15 @@ class YOLOByteTrackPersonTracker:
             writer: Optional[cv2.VideoWriter] = None
             try:
                 if save_visualization:
+                    intermediate_video = temporary / "tracked_intermediate.mp4"
                     writer = cv2.VideoWriter(
-                        str(temporary / "tracked.mp4"),
+                        str(intermediate_video),
                         cv2.VideoWriter_fourcc(*"mp4v"),
                         fps,
                         (width, height),
                     )
                     if not writer.isOpened():
-                        raise RuntimeError(f"VideoWriter could not be created: {temporary / 'tracked.mp4'}")
+                        raise RuntimeError(f"VideoWriter could not be created: {intermediate_video}")
                 frame_index = 0
                 while True:
                     ok, frame_image = capture.read()
@@ -444,6 +470,9 @@ class YOLOByteTrackPersonTracker:
                 capture.release()
                 if writer is not None:
                     writer.release()
+
+            if save_visualization:
+                self._transcode_visualization(intermediate_video, temporary / "tracked.mp4")
 
             runtime = time.perf_counter() - started
             processed_frames = len(frames)
