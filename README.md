@@ -217,6 +217,12 @@ To use your own freshly trained LoRA, point `--lora_path` at your checkpoint dir
 * `--output_dir`: directory for the generated mp4s. Expect ~5 seconds per video on a single A100.
 
 
+## Offline Tracklet Stitching
+
+Geometric and raw-detection-based offline tracklet stitching is documented in
+[docs/TRACKLET_STITCHING.md](docs/TRACKLET_STITCHING.md).
+
+
 ## Hardware and Reference Runtimes
 
 Our reported numbers were produced on:

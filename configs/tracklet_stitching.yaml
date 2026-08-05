@@ -1,0 +1,23 @@
+max_gap_frames: 5
+velocity_window: 5
+max_normalized_center_distance: 0.15
+max_area_ratio_change: 3.0
+max_aspect_ratio_change: 2.0
+
+time_tau: 3.0
+motion_sigma: 0.08
+
+merge_threshold: 0.75
+uncertain_threshold: 0.55
+minimum_assignment_margin: 0.08
+
+raw_bridge_max_center_distance: 0.12
+raw_bridge_max_area_ratio_change: 2.5
+raw_bridge_max_aspect_ratio_change: 2.0
+
+weights:
+  time: 0.15
+  motion: 0.35
+  predicted_iou: 0.20
+  scale: 0.10
+  raw_bridge: 0.20
