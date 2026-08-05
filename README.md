@@ -20,6 +20,10 @@ The independent YOLOv8x + ByteTrack preprocessing pipeline is documented in
 All reproducible preprocessing, testing, smoke-test, and output-inspection commands
 are maintained in [docs/RUN_COMMANDS.md](docs/RUN_COMMANDS.md).
 
+Run every currently implemented preprocessing stage for one video with
+`scripts/run_person_preprocessing_pipeline.py`; each stage is written to a separate
+`outputs/<video_stem>_<stage_name>/` directory.
+
 
 ## Pretrained Checkpoints and Data
 

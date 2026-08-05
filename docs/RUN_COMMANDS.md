@@ -214,14 +214,63 @@ pytest -q -m integration tests/test_tracklet_stitching_integration.py
 
 ## 从原始视频连续运行 Stage 1.1 和 Stage 1.2a
 
-先运行本文档中的 person tracking 命令，再运行：
+推荐使用统一的端到端入口。它只接收最初的视频路径，并按当前实现顺序运行
+person tracking 和 tracklet stitching：
 
 ```bash
-python scripts/run_tracklet_stitching.py \
-  --input outputs/person_tracking_omnistream \
-  --output-dir outputs/tracklet_stitching_omnistream \
-  --recursive \
-  --config configs/tracklet_stitching.yaml \
+VIDEO=/absolute/path/to/video.mp4
+
+python scripts/run_person_preprocessing_pipeline.py \
+  --input "$VIDEO" \
+  --output-root outputs \
+  --weights checkpoints/yolo/yolov8x.pt \
+  --tracker-config configs/bytetrack_person.yaml \
+  --stitching-config configs/tracklet_stitching.yaml \
+  --device 0 \
+  --conf 0.10 \
+  --iou 0.70 \
+  --imgsz 640 \
+  --half \
   --save-visualization \
   --overwrite
+```
+
+若视频名为 `sample.mp4`，输出固定为：
+
+```text
+outputs/sample_person_tracking/
+outputs/sample_tracklet_stitching/
+```
+
+当前服务器没有可用 CUDA 时使用：
+
+```bash
+python scripts/run_person_preprocessing_pipeline.py \
+  --input "$VIDEO" \
+  --output-root outputs \
+  --weights checkpoints/yolo/yolov8x.pt \
+  --device cpu \
+  --no-half \
+  --save-visualization \
+  --overwrite
+```
+
+针对之前指定的 OmniStream 视频：
+
+```bash
+python scripts/run_person_preprocessing_pipeline.py \
+  --input /gemini/platform/public/aigc/human_guozz2/code/lyh/job/OmniStream-LTX-dynamic/ltx_experiments/test_outputs/720_1080_249/onestage_motion_compare_step8_cfg1/base_step27000/ltx23_onestage_i2av_motion_001.mp4 \
+  --output-root outputs \
+  --weights checkpoints/yolo/yolov8x.pt \
+  --device cpu \
+  --no-half \
+  --save-visualization \
+  --overwrite
+```
+
+端到端入口测试：
+
+```bash
+python -m compileall scripts/run_person_preprocessing_pipeline.py
+pytest -q tests/test_person_preprocessing_pipeline.py
 ```
