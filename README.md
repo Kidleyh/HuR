@@ -22,7 +22,7 @@ are maintained in [docs/RUN_COMMANDS.md](docs/RUN_COMMANDS.md).
 
 Run every currently implemented preprocessing stage for one video with
 `scripts/run_person_preprocessing_pipeline.py`; each stage is written to a separate
-`outputs/<video_stem>_<stage_name>/` directory.
+`outputs/<name>_<stage_name>/` directory selected with the required `--name` option.
 
 
 ## Pretrained Checkpoints and Data

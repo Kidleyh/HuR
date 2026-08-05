@@ -36,12 +36,29 @@ LOGGER = logging.getLogger("run_person_preprocessing_pipeline")
 
 
 def pipeline_output_dirs(
-    video_path: Path, output_root: Path
+    name: str, output_root: Path
 ) -> Tuple[Path, Path]:
-    """Return exact stage directories derived from the final video suffix."""
-    stem = video_path.expanduser().resolve().stem
+    """Return exact stage directories derived from an explicit safe run name."""
+    validate_run_name(name)
     root = output_root.expanduser().resolve()
-    return root / f"{stem}_person_tracking", root / f"{stem}_tracklet_stitching"
+    return root / f"{name}_person_tracking", root / f"{name}_tracklet_stitching"
+
+
+def validate_run_name(name: str) -> None:
+    """Reject empty names and path components that could escape output_root."""
+    if (
+        not isinstance(name, str)
+        or not name.strip()
+        or name != name.strip()
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+    ):
+        raise ValueError(
+            "--name must be a non-empty single directory name without surrounding "
+            "whitespace, path separators, '.' or '..'"
+        )
 
 
 def _tracking_complete(output_dir: Path, visualization: bool, raw_csv: bool) -> bool:
@@ -86,6 +103,9 @@ def _load_stitching_config(args: argparse.Namespace) -> StitchingConfig:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="One input video file")
+    parser.add_argument(
+        "--name", required=True, help="Run name used in each stage output directory"
+    )
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--weights")
     parser.add_argument("--allow-download", action="store_true")
@@ -125,8 +145,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if video.suffix.lower() not in VIDEO_EXTENSIONS:
         LOGGER.error("Unsupported video extension %s", video.suffix)
         return 2
+    try:
+        validate_run_name(args.name)
+    except ValueError as error:
+        LOGGER.error("Invalid run name: %s", error)
+        return 2
     output_root = Path(args.output_root).expanduser().resolve()
-    tracking_output, stitching_output = pipeline_output_dirs(video, output_root)
+    tracking_output, stitching_output = pipeline_output_dirs(args.name, output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     try:

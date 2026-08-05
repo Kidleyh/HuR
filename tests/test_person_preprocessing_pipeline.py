@@ -10,13 +10,20 @@ from scripts import run_person_preprocessing_pipeline as pipeline
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_pipeline_output_dirs_use_video_stem_and_stage_names(tmp_path):
-    video = tmp_path / "clips" / "person sample.final.mp4"
-    tracking, stitching = pipeline.pipeline_output_dirs(video, tmp_path / "outputs")
-    assert tracking == (tmp_path / "outputs/person sample.final_person_tracking").resolve()
+def test_pipeline_output_dirs_use_explicit_name_and_stage_names(tmp_path):
+    tracking, stitching = pipeline.pipeline_output_dirs(
+        "experiment 27k", tmp_path / "outputs"
+    )
+    assert tracking == (tmp_path / "outputs/experiment 27k_person_tracking").resolve()
     assert stitching == (
-        tmp_path / "outputs/person sample.final_tracklet_stitching"
+        tmp_path / "outputs/experiment 27k_tracklet_stitching"
     ).resolve()
+
+
+def test_pipeline_output_dirs_reject_unsafe_names(tmp_path):
+    for name in ("", " ", ".", "..", "../escape", "a/b", "a\\b", " padded "):
+        with pytest.raises(ValueError, match="single directory name"):
+            pipeline.pipeline_output_dirs(name, tmp_path / "outputs")
 
 
 def test_pipeline_runs_both_stages_into_exact_directories(tmp_path, monkeypatch):
@@ -55,6 +62,7 @@ def test_pipeline_runs_both_stages_into_exact_directories(tmp_path, monkeypatch)
     code = pipeline.main(
         [
             "--input", str(video),
+            "--name", "custom_run",
             "--output-root", str(output_root),
             "--device", "cpu",
             "--no-half",
@@ -62,8 +70,8 @@ def test_pipeline_runs_both_stages_into_exact_directories(tmp_path, monkeypatch)
         ]
     )
     assert code == 0
-    assert calls["tracking"][1] == output_root / "sample_person_tracking"
-    assert calls["stitching"][2] == output_root / "sample_tracklet_stitching"
+    assert calls["tracking"][1] == output_root / "custom_run_person_tracking"
+    assert calls["stitching"][2] == output_root / "custom_run_tracklet_stitching"
     assert calls["stitching"][1] == video.resolve()
 
 
@@ -80,6 +88,7 @@ def test_pipeline_skips_both_complete_stages(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "YOLOByteTrackPersonTracker", MustNotLoad)
     assert pipeline.main([
         "--input", str(video),
+        "--name", "skip_test",
         "--output-root", str(tmp_path / "outputs"),
         "--no-save-visualization",
     ]) == 0
@@ -98,4 +107,8 @@ def test_pipeline_help_works_outside_repository(tmp_path):
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+    assert "--name" in completed.stdout
     assert "--output-root" in completed.stdout
+
+
+import pytest

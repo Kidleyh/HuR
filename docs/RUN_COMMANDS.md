@@ -222,6 +222,7 @@ VIDEO=/absolute/path/to/video.mp4
 
 python scripts/run_person_preprocessing_pipeline.py \
   --input "$VIDEO" \
+  --name sample \
   --output-root outputs \
   --weights checkpoints/yolo/yolov8x.pt \
   --tracker-config configs/bytetrack_person.yaml \
@@ -235,7 +236,7 @@ python scripts/run_person_preprocessing_pipeline.py \
   --overwrite
 ```
 
-若视频名为 `sample.mp4`，输出固定为：
+`--name sample` 的输出固定为：
 
 ```text
 outputs/sample_person_tracking/
@@ -247,6 +248,7 @@ outputs/sample_tracklet_stitching/
 ```bash
 python scripts/run_person_preprocessing_pipeline.py \
   --input "$VIDEO" \
+  --name sample \
   --output-root outputs \
   --weights checkpoints/yolo/yolov8x.pt \
   --device cpu \
@@ -260,6 +262,7 @@ python scripts/run_person_preprocessing_pipeline.py \
 ```bash
 python scripts/run_person_preprocessing_pipeline.py \
   --input /gemini/platform/public/aigc/human_guozz2/code/lyh/job/OmniStream-LTX-dynamic/ltx_experiments/test_outputs/720_1080_249/onestage_motion_compare_step8_cfg1/base_step27000/ltx23_onestage_i2av_motion_001.mp4 \
+  --name ltx23_onestage_i2av_motion_001 \
   --output-root outputs \
   --weights checkpoints/yolo/yolov8x.pt \
   --device cpu \
