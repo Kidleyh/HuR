@@ -17,6 +17,9 @@ Generating realistic human motion is a central yet unsolved challenge in video g
 The independent YOLOv8x + ByteTrack preprocessing pipeline is documented in
 [docs/PERSON_TRACKING.md](docs/PERSON_TRACKING.md).
 
+All reproducible preprocessing, testing, smoke-test, and output-inspection commands
+are maintained in [docs/RUN_COMMANDS.md](docs/RUN_COMMANDS.md).
+
 
 ## Pretrained Checkpoints and Data
 
