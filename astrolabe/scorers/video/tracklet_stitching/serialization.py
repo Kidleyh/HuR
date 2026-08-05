@@ -11,7 +11,7 @@ from typing import Any, Dict, Sequence
 
 from astrolabe.scorers.video.person_tracking.schemas import FrameDetections
 
-from .schemas import StitchingResult
+from .schemas import StitchingResult, VisualizationStatus
 from .visualization import write_stitched_video
 
 GENERATED_FILENAMES = frozenset(
@@ -38,6 +38,9 @@ def _main_payload(result: StitchingResult) -> Dict[str, Any]:
         "uncertain_edges": [edge.to_dict() for edge in result.uncertain_edges],
         "rejected_edges": [edge.to_dict() for edge in result.rejected_edges],
         "logical_tracks": [track.to_dict() for track in result.logical_tracks],
+        "visualization": (
+            result.visualization.to_dict() if result.visualization is not None else None
+        ),
         "warnings": result.warnings,
         "runtime_sec": result.runtime_sec,
     }
@@ -54,6 +57,9 @@ def _summary_payload(result: StitchingResult) -> Dict[str, Any]:
         "num_uncertain_edges": len(result.uncertain_edges),
         "num_rejected_edges": len(result.rejected_edges),
         "logical_tracks": [track.to_dict() for track in result.logical_tracks],
+        "visualization": (
+            result.visualization.to_dict() if result.visualization is not None else None
+        ),
         "warnings": result.warnings,
         "runtime_sec": result.runtime_sec,
     }
@@ -112,19 +118,39 @@ def write_stitching_outputs(
         dir=output.parent, prefix=f".{output.name}.tmp-"
     ) as name:
         staging = Path(name)
+        source_path = source_video.expanduser().resolve()
         if save_visualization:
-            if source_video.is_file():
+            if source_path.is_file():
                 write_stitched_video(
-                    source_video,
+                    source_path,
                     frames,
                     result.track_id_to_logical_track_id,
                     staging / "stitched.mp4",
                 )
+                result.visualization = VisualizationStatus(
+                    requested=True,
+                    generated=True,
+                    source_video_path=str(source_path),
+                    skip_reason=None,
+                )
             else:
+                result.visualization = VisualizationStatus(
+                    requested=True,
+                    generated=False,
+                    source_video_path=str(source_path),
+                    skip_reason="source_video_missing",
+                )
                 result.warnings.append(
                     "Original video is unavailable; visualization skipped: "
-                    f"{source_video}"
+                    f"{source_path}"
                 )
+        else:
+            result.visualization = VisualizationStatus(
+                requested=False,
+                generated=False,
+                source_video_path=str(source_path),
+                skip_reason="not_requested",
+            )
         _write_json(staging / "tracklet_stitching.json", _main_payload(result))
         _write_json(staging / "stitched_tracks_summary.json", _summary_payload(result))
         with (staging / "stitched_detections.jsonl").open(

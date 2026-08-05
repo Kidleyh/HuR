@@ -11,7 +11,13 @@ from .features import (
     bbox_center_size, bbox_iou, interpolate_bbox, normalized_center_distance,
     predict_tracklet_bbox, ratio_change, scale_score,
 )
-from .schemas import CandidateEdge, RawBridgeMatch, StitchingConfig, Tracklet
+from .schemas import (
+    CandidateEdge,
+    RawBridgeMatch,
+    RawBridgeResult,
+    StitchingConfig,
+    Tracklet,
+)
 
 
 def raw_bridge_score(
@@ -19,20 +25,32 @@ def raw_bridge_score(
     second: Tracklet,
     frames_by_index: Dict[int, FrameDetections],
     config: StitchingConfig,
-) -> Tuple[float, float, float, List[RawBridgeMatch]]:
+) -> RawBridgeResult:
     gap = second.start_frame - first.end_frame - 1
     if gap == 0:
-        return 1.0, 1.0, 1.0, []
+        return RawBridgeResult(1.0, 1.0, 1.0, [], 0)
     if gap < 0:
-        return 0.0, 0.0, 0.0, []
+        return RawBridgeResult(0.0, 0.0, 0.0, [], 0)
     start_box = first.end_detection.bbox_xyxy_normalized
     end_box = second.start_detection.bbox_xyxy_normalized
     matches: List[RawBridgeMatch] = []
+    excluded_associated_count = 0
     for offset, frame_index in enumerate(range(first.end_frame + 1, second.start_frame), 1):
         expected = interpolate_bbox(start_box, end_box, offset / (gap + 1))
         best: Tuple[float, RawDetection] | None = None
         frame = frames_by_index.get(frame_index)
+        associated_raw_indices = {
+            detection.source_detection_index
+            for detection in frame.tracked_detections
+            if detection.source_detection_index is not None
+        } if frame else set()
         for raw in frame.raw_detections if frame else []:
+            if (
+                not config.raw_bridge_allow_associated_raw
+                and raw.detection_index in associated_raw_indices
+            ):
+                excluded_associated_count += 1
+                continue
             box = raw.bbox_xyxy_normalized
             distance = normalized_center_distance(expected, box)
             _, _, ew, eh = bbox_center_size(expected)
@@ -51,7 +69,13 @@ def raw_bridge_score(
             matches.append(RawBridgeMatch(frame_index, best[1].detection_index, float(best[0])))
     coverage = len(matches) / gap
     compatibility = sum(item.compatibility for item in matches) / len(matches) if matches else 0.0
-    return 0.5 * coverage + 0.5 * compatibility, coverage, compatibility, matches
+    return RawBridgeResult(
+        score=0.5 * coverage + 0.5 * compatibility,
+        coverage=coverage,
+        compatibility=compatibility,
+        matches=matches,
+        excluded_associated_count=excluded_associated_count,
+    )
 
 
 def score_candidate(
@@ -91,8 +115,12 @@ def score_candidate(
     edge.motion_score = math.exp(-(distance ** 2) / (2 * config.motion_sigma ** 2))
     edge.predicted_iou_score = bbox_iou(predicted, target)
     edge.scale_score = scale_score(predicted, target)
-    (edge.raw_bridge_score, edge.raw_bridge_coverage, edge.raw_bridge_compatibility,
-     edge.raw_bridge_matches) = raw_bridge_score(first, second, frames_by_index, config)
+    bridge = raw_bridge_score(first, second, frames_by_index, config)
+    edge.raw_bridge_score = bridge.score
+    edge.raw_bridge_coverage = bridge.coverage
+    edge.raw_bridge_compatibility = bridge.compatibility
+    edge.raw_bridge_matches = bridge.matches
+    edge.raw_bridge_excluded_associated_count = bridge.excluded_associated_count
     components = {
         "time": edge.time_score, "motion": edge.motion_score,
         "predicted_iou": edge.predicted_iou_score, "scale": edge.scale_score,

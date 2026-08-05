@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import traceback
@@ -50,6 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--merge-threshold", type=float)
     parser.add_argument("--uncertain-threshold", type=float)
     parser.add_argument("--minimum-assignment-margin", type=float)
+    parser.add_argument(
+        "--raw-bridge-allow-associated-raw",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Allow raw detections already associated with another ByteTrack track",
+    )
     parser.add_argument("--max-videos", type=int)
     return parser
 
@@ -67,23 +74,62 @@ def load_config(args: argparse.Namespace) -> StitchingConfig:
         "merge_threshold": args.merge_threshold,
         "uncertain_threshold": args.uncertain_threshold,
         "minimum_assignment_margin": args.minimum_assignment_margin,
+        "raw_bridge_allow_associated_raw": args.raw_bridge_allow_associated_raw,
     }
     data.update({key: value for key, value in overrides.items() if value is not None})
     return StitchingConfig(**data)
 
 
-def _is_complete(output_dir: Path, visualization: bool) -> bool:
+def is_complete_result(output_dir: Path, visualization_requested: bool) -> bool:
+    """Return whether core data and the requested visualization state are complete."""
     names = [
         "tracklet_stitching.json",
         "stitched_detections.jsonl",
         "stitched_tracks_summary.json",
     ]
-    if visualization:
-        names.append("stitched.mp4")
-    return all(
-        (output_dir / name).is_file() and (output_dir / name).stat().st_size > 0
-        for name in names
-    )
+    try:
+        core_complete = all(
+            (output_dir / name).is_file() and (output_dir / name).stat().st_size > 0
+            for name in names
+        )
+    except OSError:
+        return False
+    if not core_complete:
+        return False
+    if not visualization_requested:
+        return True
+    try:
+        summary = json.loads(
+            (output_dir / "stitched_tracks_summary.json").read_text(encoding="utf-8")
+        )
+        if not isinstance(summary, dict):
+            return False
+        visualization = summary.get("visualization")
+        if not isinstance(visualization, dict):
+            return False
+        requested = visualization.get("requested")
+        generated = visualization.get("generated")
+        source_video_path = visualization.get("source_video_path")
+        skip_reason = visualization.get("skip_reason")
+        if (
+            type(requested) is not bool
+            or type(generated) is not bool
+            or not isinstance(source_video_path, str)
+            or not source_video_path
+            or requested is not True
+        ):
+            return False
+        if generated:
+            return (
+                skip_reason is None
+                and (output_dir / "stitched.mp4").is_file()
+                and (output_dir / "stitched.mp4").stat().st_size > 0
+            )
+        if skip_reason == "source_video_missing":
+            return not Path(source_video_path).expanduser().is_file()
+        return False
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -106,7 +152,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     succeeded = skipped = failed = 0
     for index, source in enumerate(sources, 1):
         destination = output_dir_for_result(source, input_root, output_root)
-        if _is_complete(destination, args.save_visualization) and not args.overwrite:
+        if is_complete_result(destination, args.save_visualization) and not args.overwrite:
             skipped += 1
             LOGGER.info("[%d/%d] Skipping complete result: %s", index, len(sources), source)
             continue

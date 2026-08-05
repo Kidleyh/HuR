@@ -38,6 +38,12 @@ The score combines:
 For each gap frame, raw bridge scoring linearly interpolates an expected box and
 selects the best compatible raw detection. The same raw detection may support
 multiple candidate scores because scoring does not consume or modify detections.
+By default, a raw detection whose `detection_index` is referenced by any tracked
+detection in that frame is excluded: it already belongs to another active ByteTrack
+identity and must not become bridge evidence for this candidate. This conservative
+rule reduces the risk of borrowing another tracked person; it does not solve identity
+crossings. Set `raw_bridge_allow_associated_raw: true`, or pass
+`--raw-bridge-allow-associated-raw`, only for ablation or legacy behavior.
 
 Edges at or above `merge_threshold` enter a global maximum-weight one-to-one
 assignment implemented with `scipy.optimize.linear_sum_assignment` and dummy
@@ -75,7 +81,8 @@ python scripts/run_tracklet_stitching.py \
   --max-gap-frames 5 \
   --merge-threshold 0.75 \
   --uncertain-threshold 0.55 \
-  --minimum-assignment-margin 0.08
+  --minimum-assignment-margin 0.08 \
+  --no-raw-bridge-allow-associated-raw
 ```
 
 The default config is resolved relative to the project, so the script can be invoked
@@ -97,7 +104,12 @@ Each result receives an independent output directory containing:
 Outputs are built in a temporary directory. Failed serialization or visualization
 does not replace prior complete stitching output, and temporary files are cleaned.
 If the source video no longer exists, data outputs still succeed, visualization is
-skipped, and a warning is recorded.
+skipped, and a warning is recorded. Both JSON summaries include a structured
+`visualization` object with `requested`, `generated`, `source_video_path`, and
+`skip_reason`. A completed `source_video_missing` result is skipped on later runs
+while that video remains absent. If the source video becomes available later, the
+result becomes incomplete and is rerun to generate `stitched.mp4`. Video read,
+OpenCV write, and FFmpeg failures remain real processing errors.
 
 ## Current limitations
 

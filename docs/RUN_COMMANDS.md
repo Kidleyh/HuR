@@ -101,6 +101,16 @@ python -m compileall \
 pytest -q -m "not integration"
 ```
 
+Stage 1.2a.1 定向测试：
+
+```bash
+pytest -q \
+  tests/test_tracklet_stitching_candidates.py \
+  tests/test_tracklet_stitching_io.py \
+  tests/test_tracklet_stitching_matching.py \
+  tests/test_tracklet_stitching_features.py
+```
+
 ### 单个跟踪结果目录
 
 ```bash
@@ -136,7 +146,9 @@ python scripts/run_tracklet_stitching.py \
 python scripts/run_tracklet_stitching.py \
   --input outputs/person_tracking_smoke \
   --output-dir outputs/tracklet_stitching_smoke \
+  --recursive \
   --config configs/tracklet_stitching.yaml \
+  --no-raw-bridge-allow-associated-raw \
   --save-visualization \
   --overwrite
 ```
@@ -163,8 +175,28 @@ for path in paths:
     print("merged edges:", len(data["merged_edges"]))
     print("uncertain edges:", len(data["uncertain_edges"]))
     print("rejected edges:", len(data["rejected_edges"]))
+    print("visualization:", data.get("visualization"))
+    excluded = sum(
+        edge.get("raw_bridge_excluded_associated_count", 0)
+        for group in ("merged_edges", "uncertain_edges", "rejected_edges")
+        for edge in data.get(group, [])
+    )
+    print("excluded associated raw:", excluded)
     print("mapping:", data["track_id_to_logical_track_id"])
 PY
+```
+
+为消融实验显式恢复旧的 raw bridge 行为：
+
+```bash
+python scripts/run_tracklet_stitching.py \
+  --input outputs/person_tracking_smoke \
+  --output-dir outputs/tracklet_stitching_allow_associated \
+  --recursive \
+  --config configs/tracklet_stitching.yaml \
+  --raw-bridge-allow-associated-raw \
+  --save-visualization \
+  --overwrite
 ```
 
 ### Tracklet stitching 集成测试

@@ -5,11 +5,14 @@ from astrolabe.scorers.video.tracklet_stitching.candidates import raw_bridge_sco
 from astrolabe.scorers.video.tracklet_stitching.schemas import StitchingConfig, Tracklet
 
 
-def tracked(track_id, cx, width=0.1, height=0.2):
+def tracked(
+    track_id, cx, width=0.1, height=0.2, source_detection_index=None
+):
     return TrackedDetection.from_xyxy(
         track_id=track_id, class_id=0, class_name="person", confidence=0.9,
         bbox_xyxy=[(cx-width/2)*1000, 400, (cx+width/2)*1000, 400+height*1000],
         image_width=1000, image_height=1000,
+        source_detection_index=source_detection_index,
     )
 
 
@@ -51,21 +54,110 @@ def test_raw_bridge_uses_best_compatible_detection():
         3: FrameDetections(3, 0.3, [raw(0, 0.4), raw(1, 0.9)], []),
         4: FrameDetections(4, 0.4, [raw(0, 0.5)], []),
     }
-    score, coverage, compatibility, matches = raw_bridge_score(first, second, frames, config)
-    assert coverage == 1.0
-    assert score > 0.8 and compatibility > 0.6
-    assert [item.raw_detection_index for item in matches] == [0, 0]
-    missing_score = raw_bridge_score(first, second, {}, config)[0]
-    assert missing_score == 0.0
+    result = raw_bridge_score(first, second, frames, config)
+    assert result.coverage == 1.0
+    assert result.score > 0.8 and result.compatibility > 0.6
+    assert [item.raw_detection_index for item in result.matches] == [0, 0]
+    assert raw_bridge_score(first, second, {}, config).score == 0.0
     far_score = raw_bridge_score(
         first, second, {3: FrameDetections(3, 0.3, [raw(0, 0.95)], [])}, config
-    )[0]
+    ).score
     assert far_score == 0.0
+
+
+def test_raw_bridge_excludes_associated_raw_by_default():
+    first = tl(1, [1, 2], [0.2, 0.3])
+    second = tl(3, [4], [0.5])
+    frame = FrameDetections(
+        3,
+        0.3,
+        [raw(0, 0.4)],
+        [tracked(9, 0.4, source_detection_index=0)],
+    )
+    result = raw_bridge_score(first, second, {3: frame}, StitchingConfig())
+    assert result.score == 0.0
+    assert result.matches == []
+    assert result.excluded_associated_count == 1
+
+
+def test_raw_bridge_can_allow_associated_raw_for_ablation():
+    first = tl(1, [1, 2], [0.2, 0.3])
+    second = tl(3, [4], [0.5])
+    frame = FrameDetections(
+        3,
+        0.3,
+        [raw(0, 0.4)],
+        [tracked(9, 0.4, source_detection_index=0)],
+    )
+    result = raw_bridge_score(
+        first,
+        second,
+        {3: frame},
+        StitchingConfig(raw_bridge_allow_associated_raw=True),
+    )
+    assert result.score > 0.0
+    assert [match.raw_detection_index for match in result.matches] == [0]
+    assert result.excluded_associated_count == 0
+
+
+def test_raw_bridge_prefers_best_unassociated_raw():
+    first = tl(1, [1, 2], [0.2, 0.3])
+    second = tl(3, [4], [0.5])
+    frame = FrameDetections(
+        3,
+        0.3,
+        [raw(0, 0.4), raw(1, 0.42)],
+        [tracked(9, 0.4, source_detection_index=0)],
+    )
+    result = raw_bridge_score(first, second, {3: frame}, StitchingConfig())
+    assert [match.raw_detection_index for match in result.matches] == [1]
+    assert result.excluded_associated_count == 1
+
+
+def test_raw_bridge_counts_exclusions_across_gap_frames():
+    first = tl(1, [1, 2], [0.2, 0.3])
+    second = tl(3, [5], [0.6])
+    frames = {
+        3: FrameDetections(
+            3,
+            0.3,
+            [raw(0, 0.4), raw(1, 0.41)],
+            [
+                tracked(8, 0.4, source_detection_index=0),
+                tracked(9, 0.41, source_detection_index=1),
+            ],
+        ),
+        4: FrameDetections(
+            4,
+            0.4,
+            [raw(0, 0.5), raw(1, 0.52)],
+            [
+                tracked(10, 0.5, source_detection_index=0),
+                tracked(11, 0.8, source_detection_index=None),
+                tracked(12, 0.8, source_detection_index=99),
+            ],
+        ),
+    }
+    result = raw_bridge_score(first, second, frames, StitchingConfig())
+    assert result.excluded_associated_count == 3
+    assert [match.raw_detection_index for match in result.matches] == [1]
 
 
 def test_zero_gap_raw_bridge_is_one():
     first, second = tl(1, [0], [0.2]), tl(2, [1], [0.2])
-    score, coverage, compatibility, matches = raw_bridge_score(
+    result = raw_bridge_score(
         first, second, {}, StitchingConfig()
     )
-    assert (score, coverage, compatibility, matches) == (1.0, 1.0, 1.0, [])
+    assert result.score == 1.0
+    assert result.coverage == 1.0
+    assert result.compatibility == 1.0
+    assert result.matches == []
+    assert result.excluded_associated_count == 0
+
+
+def test_raw_bridge_allow_associated_raw_requires_bool():
+    with pytest.raises(ValueError, match="must be a bool"):
+        StitchingConfig(raw_bridge_allow_associated_raw="false")
+
+
+import pytest

@@ -24,6 +24,7 @@ class StitchingConfig:
     raw_bridge_max_center_distance: float = 0.12
     raw_bridge_max_area_ratio_change: float = 2.5
     raw_bridge_max_aspect_ratio_change: float = 2.0
+    raw_bridge_allow_associated_raw: bool = False
     weights: Dict[str, float] = field(default_factory=lambda: {
         "time": 0.15, "motion": 0.35, "predicted_iou": 0.20,
         "scale": 0.10, "raw_bridge": 0.20,
@@ -38,6 +39,8 @@ class StitchingConfig:
             raise ValueError("time_tau and motion_sigma must be positive")
         if self.minimum_assignment_margin < 0:
             raise ValueError("minimum_assignment_margin must be non-negative")
+        if type(self.raw_bridge_allow_associated_raw) is not bool:
+            raise ValueError("raw_bridge_allow_associated_raw must be a bool")
         expected = {"time", "motion", "predicted_iou", "scale", "raw_bridge"}
         if set(self.weights) != expected or any(value < 0 for value in self.weights.values()):
             raise ValueError(f"weights must contain non-negative values for {sorted(expected)}")
@@ -97,6 +100,15 @@ class RawBridgeMatch:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class RawBridgeResult:
+    score: float
+    coverage: float
+    compatibility: float
+    matches: List[RawBridgeMatch]
+    excluded_associated_count: int = 0
+
+
 @dataclass
 class CandidateEdge:
     from_track_id: int
@@ -110,6 +122,7 @@ class CandidateEdge:
     raw_bridge_score: float = 0.0
     raw_bridge_coverage: float = 0.0
     raw_bridge_compatibility: float = 0.0
+    raw_bridge_excluded_associated_count: int = 0
     normalized_center_distance: float = 0.0
     area_ratio_change: float = 1.0
     aspect_ratio_change: float = 1.0
@@ -145,12 +158,41 @@ class LogicalTrackStatistics:
 
 
 @dataclass
+class VisualizationStatus:
+    requested: bool
+    generated: bool
+    source_video_path: str
+    skip_reason: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if type(self.requested) is not bool or type(self.generated) is not bool:
+            raise ValueError("visualization requested/generated must be bool")
+        if not isinstance(self.source_video_path, str) or not self.source_video_path:
+            raise ValueError("visualization source_video_path must be non-empty")
+        valid = (
+            (not self.requested and not self.generated and self.skip_reason == "not_requested")
+            or (self.requested and self.generated and self.skip_reason is None)
+            or (
+                self.requested
+                and not self.generated
+                and self.skip_reason == "source_video_missing"
+            )
+        )
+        if not valid:
+            raise ValueError("invalid visualization status combination")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class StitchingResult:
     source_tracking_schema_version: str
     config: StitchingConfig
     track_id_to_logical_track_id: Dict[int, int]
     edges: List[CandidateEdge]
     logical_tracks: List[LogicalTrackStatistics]
+    visualization: Optional[VisualizationStatus] = None
     warnings: List[str] = field(default_factory=list)
     schema_version: str = "1.0"
     runtime_sec: float = 0.0
