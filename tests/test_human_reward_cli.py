@@ -4,6 +4,7 @@ from scripts import run_human_reward
 
 
 RESULT = {
+    "valid": True, "reason": None,
     "reward": 0.9, "micro_score": 0.9, "macro_score": 0.8,
     "logical_track_count": 1, "observed_person_frames": 2,
     "scored_person_frames": 2, "abnormal_person_frames": 0,
@@ -17,6 +18,9 @@ class Model:
 
     def score(self, video):
         return RESULT
+
+    def score_batch(self, videos):
+        return [dict(RESULT, reward=index / 10) for index, _ in enumerate(videos)]
 
 
 def test_cli_without_output_prints_one_json_and_writes_nothing(
@@ -42,3 +46,23 @@ def test_cli_writes_only_atomic_final_json(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out == ""
     assert json.loads(output.read_text()) == RESULT
     assert list(output.parent.glob(".*.tmp")) == []
+
+
+def test_cli_accepts_repeated_videos_and_writes_one_json_array(
+    tmp_path, monkeypatch, capsys
+):
+    first, second = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    first.write_bytes(b"video")
+    second.write_bytes(b"video")
+    output = tmp_path / "rewards.json"
+    monkeypatch.setattr(run_human_reward, "HumanRewardModel", Model)
+
+    assert run_human_reward.main([
+        "--video", str(first), "--video", str(second),
+        "--output", str(output), "--device", "cpu",
+    ]) == 0
+
+    assert capsys.readouterr().out == ""
+    data = json.loads(output.read_text())
+    assert [item["reward"] for item in data] == [0.0, 0.1]
+    assert list(tmp_path.glob(".*.tmp")) == []

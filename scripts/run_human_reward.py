@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -20,7 +20,7 @@ from astrolabe.scorers.video.human_reward import HumanRewardConfig, HumanRewardM
 def build_parser() -> argparse.ArgumentParser:
     defaults = HumanRewardConfig()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--video", required=True)
+    parser.add_argument("--video", action="append", required=True)
     parser.add_argument("--output")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--weights", default=str(defaults.yolo_weights))
@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _write_atomic(path: Path, result: dict) -> None:
+def _write_atomic(path: Path, result: Any) -> None:
     destination = path.expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
@@ -62,7 +62,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         conf=args.conf, iou=args.iou, imgsz=args.imgsz, half=args.half,
         crop_batch_size=args.crop_batch_size,
     )
-    result = HumanRewardModel(config).score(args.video)
+    model = HumanRewardModel(config)
+    result = (
+        model.score(args.video[0])
+        if len(args.video) == 1
+        else model.score_batch(args.video)
+    )
     if args.output:
         _write_atomic(Path(args.output), result)
     else:

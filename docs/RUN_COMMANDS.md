@@ -379,6 +379,17 @@ python scripts/run_human_reward.py \
   --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
 ```
 
+多个视频共享一次YOLO加载和一次VBench模型加载，输出一个顺序与输入一致的JSON数组：
+
+```bash
+python scripts/run_human_reward.py \
+  --video /absolute/path/to/a.mp4 \
+  --video /absolute/path/to/b.mp4 \
+  --output outputs/rewards.json \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
+```
+
 两种运行方式都只执行两遍视频读取，不写tracking、stitching、worker日志或可视化等中间文件。`--vbench-clip-model`应指向已部署的本地模型目录，避免运行时联网下载。
 
 测试：

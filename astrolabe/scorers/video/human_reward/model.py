@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import gc
 import os
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 import yaml
 
 from astrolabe.scorers.video.human_anomaly.aggregation import aggregate_human_anomaly
-from astrolabe.scorers.video.human_anomaly.engine import HumanAnomalyEngine
+from astrolabe.scorers.video.human_anomaly.engine import (
+    HumanAnomalyEngine,
+    _is_cuda_failure,
+)
 from astrolabe.scorers.video.human_anomaly.manifest import build_human_anomaly_entries
 from astrolabe.scorers.video.human_anomaly.validation import validate_worker_results
 from astrolabe.scorers.video.person_tracking.tracker import YOLOByteTrackPersonTracker
@@ -102,6 +104,33 @@ def _release_cuda_models() -> None:
         pass
 
 
+def _invalid_result(reason: str) -> Dict[str, Any]:
+    """Build the stable result shape for one invalid video."""
+    return {
+        "valid": False,
+        "reason": reason,
+        "reward": None,
+        "micro_score": None,
+        "macro_score": None,
+        "logical_track_count": 0,
+        "observed_person_frames": 0,
+        "scored_person_frames": 0,
+        "abnormal_person_frames": 0,
+        "failed_person_frames": 0,
+    }
+
+
+def _failure_reason(stage: str, error: BaseException) -> str:
+    return f"{stage}_failed: {type(error).__name__}: {error}"
+
+
+@dataclass(frozen=True)
+class _PreparedVideo:
+    video: Path
+    tracking: Any
+    entries: Any
+
+
 class HumanRewardModel:
     """Run tracking, stitching, and anatomy scoring entirely in memory."""
 
@@ -121,12 +150,15 @@ class HumanRewardModel:
         self._release_callback = release_callback or _release_cuda_models
         self._stitching_config = _load_stitching_config(self.config.stitching_config)
 
-    def score(self, video_path: Union[str, Path]) -> Dict[str, Union[float, int]]:
-        """Return the final reward without creating intermediate artifacts."""
-        video = Path(video_path).expanduser().resolve()
-        if not video.is_file():
-            raise FileNotFoundError(f"Input video does not exist: {video}")
-
+    def score_batch(
+        self, video_paths: Sequence[Union[str, Path]]
+    ) -> List[Dict[str, Any]]:
+        """Score videos in order while loading each model family only once."""
+        videos = [Path(path).expanduser().resolve() for path in video_paths]
+        if not videos:
+            return []
+        results: List[Optional[Dict[str, Any]]] = [None] * len(videos)
+        prepared: List[Optional[_PreparedVideo]] = [None] * len(videos)
         tracker = None
         try:
             tracker = self._tracker_factory(
@@ -139,54 +171,98 @@ class HumanRewardModel:
                 half=self.config.half,
                 allow_download=False,
             )
-            tracking = tracker.track_video_in_memory(str(video))
-            stitching_input = tracking_input_from_result(tracking)
-            stitching = self._stitcher(stitching_input, self._stitching_config)
-            entries, _ = build_human_anomaly_entries(
-                tracking.frames,
-                stitching.track_id_to_logical_track_id,
-                tracking.video.width,
-                tracking.video.height,
-            )
-            if not entries:
-                raise ValueError(
-                    "No valid person-frame entries were produced from in-memory tracking"
-                )
+            for index, video in enumerate(videos):
+                try:
+                    if not video.is_file():
+                        raise FileNotFoundError(f"Input video does not exist: {video}")
+                    tracking = tracker.track_video_in_memory(str(video))
+                    stitching = self._stitcher(
+                        tracking_input_from_result(tracking), self._stitching_config
+                    )
+                    entries, _ = build_human_anomaly_entries(
+                        tracking.frames,
+                        stitching.track_id_to_logical_track_id,
+                        tracking.video.width,
+                        tracking.video.height,
+                    )
+                    if not entries:
+                        results[index] = _invalid_result("no_person_detected")
+                        continue
+                    prepared[index] = _PreparedVideo(video, tracking, entries)
+                except Exception as error:
+                    if _is_cuda_failure(error):
+                        raise
+                    results[index] = _invalid_result(
+                        _failure_reason("tracking", error)
+                    )
         finally:
             tracker = None
             self._release_callback()
 
-        engine = self._anomaly_engine_factory(
-            vbench_root=self.config.vbench_root,
-            cache_dir=self.config.vbench_cache_dir,
-            clip_model=self.config.vbench_clip_model,
-            device=self.config.device,
-            crop_batch_size=self.config.crop_batch_size,
-        )
-        try:
-            frame_results = engine.score_video(video, entries)
-        finally:
-            close = getattr(engine, "close", None)
-            if callable(close):
-                close()
-            engine = None
-            self._release_callback()
+        if any(item is not None for item in prepared):
+            engine = self._anomaly_engine_factory(
+                vbench_root=self.config.vbench_root,
+                cache_dir=self.config.vbench_cache_dir,
+                clip_model=self.config.vbench_clip_model,
+                device=self.config.device,
+                crop_batch_size=self.config.crop_batch_size,
+            )
+            try:
+                for index, item in enumerate(prepared):
+                    if item is None:
+                        continue
+                    try:
+                        frame_results = engine.score_video(item.video, item.entries)
+                        validate_worker_results(item.entries, frame_results)
+                        _, summary = aggregate_human_anomaly(
+                            item.entries,
+                            frame_results,
+                            item.tracking.video.width,
+                            item.tracking.video.height,
+                        )
+                        micro = summary["video_micro_score"]
+                        macro = summary["video_macro_score"]
+                        if micro is None or macro is None:
+                            raise RuntimeError(
+                                "Human Reward aggregation produced no valid score"
+                            )
+                        results[index] = {
+                            "valid": True,
+                            "reason": None,
+                            "reward": float(micro),
+                            "micro_score": float(micro),
+                            "macro_score": float(macro),
+                            "logical_track_count": int(summary["logical_track_count"]),
+                            "observed_person_frames": int(
+                                summary["observed_person_frames"]
+                            ),
+                            "scored_person_frames": int(
+                                summary["scored_person_frames"]
+                            ),
+                            "abnormal_person_frames": int(
+                                summary["abnormal_person_frames"]
+                            ),
+                            "failed_person_frames": int(
+                                summary["failed_person_frames"]
+                            ),
+                        }
+                    except Exception as error:
+                        if _is_cuda_failure(error):
+                            raise
+                        results[index] = _invalid_result(
+                            _failure_reason("anomaly", error)
+                        )
+            finally:
+                close = getattr(engine, "close", None)
+                if callable(close):
+                    close()
+                engine = None
+                self._release_callback()
 
-        validate_worker_results(entries, frame_results)
-        _, summary = aggregate_human_anomaly(
-            entries, frame_results, tracking.video.width, tracking.video.height
-        )
-        micro = summary["video_micro_score"]
-        macro = summary["video_macro_score"]
-        if micro is None or macro is None:
-            raise RuntimeError("Human Reward aggregation produced no valid score")
-        return {
-            "reward": float(micro),
-            "micro_score": float(micro),
-            "macro_score": float(macro),
-            "logical_track_count": int(summary["logical_track_count"]),
-            "observed_person_frames": int(summary["observed_person_frames"]),
-            "scored_person_frames": int(summary["scored_person_frames"]),
-            "abnormal_person_frames": int(summary["abnormal_person_frames"]),
-            "failed_person_frames": int(summary["failed_person_frames"]),
-        }
+        if any(result is None for result in results):
+            raise RuntimeError("Internal error: batch result was not populated")
+        return [result for result in results if result is not None]
+
+    def score(self, video_path: Union[str, Path]) -> Dict[str, Any]:
+        """Score one video through the shared batch implementation."""
+        return self.score_batch([video_path])[0]
