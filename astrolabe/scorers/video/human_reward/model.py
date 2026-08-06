@@ -127,8 +127,9 @@ def _failure_reason(stage: str, error: BaseException) -> str:
 @dataclass(frozen=True)
 class _PreparedVideo:
     video: Path
-    tracking: Any
     entries: Any
+    width: int
+    height: int
 
 
 class HumanRewardModel:
@@ -154,6 +155,11 @@ class HumanRewardModel:
         self, video_paths: Sequence[Union[str, Path]]
     ) -> List[Dict[str, Any]]:
         """Score videos in order while loading each model family only once."""
+        if isinstance(video_paths, (str, Path)):
+            raise TypeError(
+                "score_batch expects a sequence of video paths; "
+                "use score() for one video"
+            )
         videos = [Path(path).expanduser().resolve() for path in video_paths]
         if not videos:
             return []
@@ -188,7 +194,12 @@ class HumanRewardModel:
                     if not entries:
                         results[index] = _invalid_result("no_person_detected")
                         continue
-                    prepared[index] = _PreparedVideo(video, tracking, entries)
+                    prepared[index] = _PreparedVideo(
+                        video=video,
+                        entries=entries,
+                        width=tracking.video.width,
+                        height=tracking.video.height,
+                    )
                 except Exception as error:
                     if _is_cuda_failure(error):
                         raise
@@ -217,8 +228,8 @@ class HumanRewardModel:
                         _, summary = aggregate_human_anomaly(
                             item.entries,
                             frame_results,
-                            item.tracking.video.width,
-                            item.tracking.video.height,
+                            item.width,
+                            item.height,
                         )
                         micro = summary["video_micro_score"]
                         macro = summary["video_macro_score"]

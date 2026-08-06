@@ -1,7 +1,11 @@
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from astrolabe.scorers.video.human_reward import HumanRewardConfig, HumanRewardModel
+from astrolabe.scorers.video.human_reward.model import _PreparedVideo
 from astrolabe.scorers.video.person_tracking.schemas import (
     DetectionSummary, FrameDetections, TrackedDetection, VideoInfo, VideoTrackingResult,
 )
@@ -298,6 +302,27 @@ def test_score_delegates_to_single_element_batch(tmp_path, monkeypatch):
     assert calls == [[video]]
 
 
+def test_prepared_video_retains_only_anomaly_inputs():
+    assert [field.name for field in fields(_PreparedVideo)] == [
+        "video", "entries", "width", "height"
+    ]
+
+
+@pytest.mark.parametrize("video_paths", ["video.mp4", Path("video.mp4")])
+def test_score_batch_rejects_single_path_value(tmp_path, video_paths):
+    model = HumanRewardModel(config(tmp_path), release_callback=lambda: None)
+    with pytest.raises(
+        TypeError,
+        match=r"score_batch expects a sequence of video paths; use score\(\) for one video",
+    ):
+        model.score_batch(video_paths)
+
+
+def test_score_batch_empty_sequence_returns_empty_list(tmp_path):
+    model = HumanRewardModel(config(tmp_path), release_callback=lambda: None)
+    assert model.score_batch([]) == []
+
+
 def test_one_anomaly_failure_does_not_block_later_video(tmp_path):
     videos = [tmp_path / "broken.mp4", tmp_path / "valid.mp4"]
     for video in videos:
@@ -353,8 +378,6 @@ def test_cuda_failure_terminates_batch(tmp_path):
 
         def track_video_in_memory(self, source):
             raise RuntimeError("CUDA out of memory")
-
-    import pytest
 
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
         HumanRewardModel(
