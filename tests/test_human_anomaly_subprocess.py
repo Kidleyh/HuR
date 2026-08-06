@@ -65,10 +65,31 @@ def write_complete_result(output, status="success"):
         (output / name).write_text(content)
 
 
-def test_complete_result_rejects_zero_byte_file(tmp_path):
+def test_complete_result_accepts_empty_worker_logs(tmp_path):
     output = tmp_path / "output"
     write_complete_result(output)
     (output / "worker_stdout.log").write_text("")
+    (output / "worker_stderr.log").write_text("")
+    assert main_script._is_complete(output) is True
+
+
+@pytest.mark.parametrize("name", ["worker_stdout.log", "worker_stderr.log"])
+def test_complete_result_rejects_missing_worker_log(tmp_path, name):
+    output = tmp_path / "output"
+    write_complete_result(output)
+    (output / name).unlink()
+    assert main_script._is_complete(output) is False
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["human_anomaly_input.jsonl", "human_anomaly_frames.jsonl",
+     "human_anomaly_tracks.json", "human_anomaly_summary.json", "run_manifest.json"],
+)
+def test_complete_result_rejects_zero_byte_core_output(tmp_path, name):
+    output = tmp_path / "output"
+    write_complete_result(output)
+    (output / name).write_text("")
     assert main_script._is_complete(output) is False
 
 

@@ -36,11 +36,12 @@ from astrolabe.scorers.video.human_anomaly.visualization import (
 from astrolabe.scorers.video.human_anomaly.validation import validate_worker_results
 
 LOGGER = logging.getLogger("run_person_human_anomaly")
-CORE_OUTPUTS = (
+REQUIRED_NONEMPTY_OUTPUTS = (
     "human_anomaly_input.jsonl", "human_anomaly_frames.jsonl",
     "human_anomaly_tracks.json", "human_anomaly_summary.json", "run_manifest.json",
-    "worker_stdout.log", "worker_stderr.log",
 )
+REQUIRED_LOG_OUTPUTS = ("worker_stdout.log", "worker_stderr.log")
+CORE_OUTPUTS = REQUIRED_NONEMPTY_OUTPUTS + REQUIRED_LOG_OUTPUTS
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,8 +84,10 @@ def _is_complete(output: Path) -> bool:
     try:
         if not all(
             (output / name).is_file() and (output / name).stat().st_size > 0
-            for name in CORE_OUTPUTS
+            for name in REQUIRED_NONEMPTY_OUTPUTS
         ):
+            return False
+        if not all((output / name).is_file() for name in REQUIRED_LOG_OUTPUTS):
             return False
         run_manifest = json.loads(
             (output / "run_manifest.json").read_text(encoding="utf-8")
