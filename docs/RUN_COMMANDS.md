@@ -344,3 +344,12 @@ pytest -q \
   tests/test_human_anomaly_aggregation.py \
   tests/test_human_anomaly_subprocess.py
 ```
+
+Stage 1.3 鲁棒性加固和全仓验收：
+
+```bash
+pytest -q tests/test_human_anomaly*.py
+pytest -q tests/test_person_preprocessing_pipeline.py
+pytest -q
+git diff --check
+```

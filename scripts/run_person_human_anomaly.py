@@ -33,6 +33,7 @@ from astrolabe.scorers.video.human_anomaly.subprocess_backend import (
 from astrolabe.scorers.video.human_anomaly.visualization import (
     write_anomaly_visualization,
 )
+from astrolabe.scorers.video.human_anomaly.validation import validate_worker_results
 
 LOGGER = logging.getLogger("run_person_human_anomaly")
 CORE_OUTPUTS = (
@@ -58,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _jsonl(path: Path) -> List[Dict[str, Any]]:
+def _jsonl(path: Path) -> List[Any]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
@@ -80,8 +81,27 @@ def _path_info(path: Path) -> Dict[str, Any]:
 
 def _is_complete(output: Path) -> bool:
     try:
-        return all((output / name).is_file() and (output / name).stat().st_size >= 0 for name in CORE_OUTPUTS)
-    except OSError:
+        if not all(
+            (output / name).is_file() and (output / name).stat().st_size > 0
+            for name in CORE_OUTPUTS
+        ):
+            return False
+        run_manifest = json.loads(
+            (output / "run_manifest.json").read_text(encoding="utf-8")
+        )
+        if not isinstance(run_manifest, dict) or run_manifest.get("status") != "success":
+            return False
+        frame_results = _jsonl(output / "human_anomaly_frames.jsonl")
+        if not frame_results or not all(isinstance(item, dict) for item in frame_results):
+            return False
+        tracks = json.loads(
+            (output / "human_anomaly_tracks.json").read_text(encoding="utf-8")
+        )
+        summary = json.loads(
+            (output / "human_anomaly_summary.json").read_text(encoding="utf-8")
+        )
+        return isinstance(tracks, list) and isinstance(summary, dict)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
         return False
 
 
@@ -144,6 +164,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         }
         try:
             entries, manifest_failures, width, height = build_human_anomaly_manifest(video, stitching)
+            if not entries:
+                raise ValueError(
+                    "No valid person-frame entries were produced from stitching results"
+                )
             input_manifest = stage / "human_anomaly_input.jsonl"
             write_input_manifest(entries, input_manifest)
             worker_output = stage / "human_anomaly_frames.jsonl"
@@ -162,6 +186,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 working_directory=vbench_root,
             )
             results = _jsonl(worker_output)
+            validate_worker_results(entries, results)
             tracks, summary = aggregate_human_anomaly(entries, results, width, height)
             summary["manifest_failures"] = [item.to_dict() for item in manifest_failures]
             _write_json(stage / "human_anomaly_tracks.json", tracks)

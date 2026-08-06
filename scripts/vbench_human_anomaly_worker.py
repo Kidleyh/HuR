@@ -136,37 +136,59 @@ def _process_person(
         "human": {"scored": False, "scores": [], "abnormal_probability": None,
                   "abnormal": False},
         "faces": [], "hands": [], "person_abnormal": False, "failure_reason": None,
+        "failures": [],
     }
+
+    def record_failure(stage: str, error: Exception) -> None:
+        if _is_cuda_failure(error):
+            raise error
+        base["failures"].append({
+            "stage": stage,
+            "error_type": type(error).__name__,
+            "message": str(error),
+        })
+
+    bbox = entry["bbox_xyxy"]
     try:
-        bbox = entry["bbox_xyxy"]
         human_crop = analyzer.smart_cut(frame, bbox)
         base["human"] = classifier_result(
             analyzer.predict_batch("human", [human_crop])[0], "human"
         )
+    except Exception as error:
+        record_failure("human_scoring", error)
+
+    detected_parts: List[Dict[str, Any]] = []
+    try:
         x1, y1, x2, y2 = [int(round(value)) for value in bbox]
         direct_crop = frame[y1:y2, x1:x2]
         if direct_crop.size == 0:
             raise ValueError("empty direct human crop for face/hand detection")
-        for part in detector.detect(direct_crop):
+        detected_parts = detector.detect(direct_crop)
+    except Exception as error:
+        record_failure("face_hand_detection", error)
+
+    for part in detected_parts:
+        category = "face" if part["label"] == 0 else "hand"
+        try:
             local = part["bbox_xyxy"]
-            global_bbox = [local[0] + x1, local[1] + y1, local[2] + x1, local[3] + y1]
-            category = "face" if part["label"] == 0 else "hand"
+            global_bbox = [
+                local[0] + x1, local[1] + y1, local[2] + x1, local[3] + y1
+            ]
             scored = _part_result(
                 analyzer, category, frame, global_bbox, part["detector_score"]
             )
             base["faces" if category == "face" else "hands"].append(scored)
-        base["person_abnormal"] = person_is_abnormal(
-            base["human"], base["faces"], base["hands"]
+        except Exception as error:
+            record_failure(f"{category}_scoring", error)
+
+    base["person_abnormal"] = person_is_abnormal(
+        base["human"], base["faces"], base["hands"]
+    )
+    if base["failures"]:
+        base["failure_reason"] = "; ".join(
+            f"{failure['stage']}: {failure['error_type']}: {failure['message']}"
+            for failure in base["failures"]
         )
-    except Exception as error:
-        if _is_cuda_failure(error):
-            raise
-        base.update({
-            "human": {"scored": False, "scores": [], "abnormal_probability": None,
-                      "abnormal": False},
-            "faces": [], "hands": [], "person_abnormal": False,
-            "failure_reason": f"{type(error).__name__}: {error}",
-        })
     return base
 
 

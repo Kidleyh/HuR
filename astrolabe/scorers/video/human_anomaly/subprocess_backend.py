@@ -35,6 +35,13 @@ def _cuda_visible_devices(device: str) -> str:
     return ""
 
 
+def _worker_device(device: str) -> str:
+    """Translate a host GPU selection into the worker's remapped device."""
+    if device == "cuda" or device.startswith("cuda:"):
+        return "cuda:0"
+    return device
+
+
 def build_worker_command(
     *,
     conda_env: str,
@@ -66,7 +73,7 @@ def build_worker_command(
         "--output-jsonl", str(output_jsonl.resolve()),
         "--runtime-info-json", str(runtime_info_json.resolve()),
         "--vbench-root", str(vbench_root.resolve()),
-        "--device", device,
+        "--device", _worker_device(device),
         "--crop-batch-size", str(crop_batch_size),
     ]
 

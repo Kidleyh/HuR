@@ -137,3 +137,21 @@ VBench source and configuration files were not modified.
 Human Anomaly evaluates single-frame anatomy. It does not evaluate temporal action
 plausibility, modify logical tracks, run pose/SMPL, add ReID, or treat missing
 face/hand detections as anomalies.
+
+## Stage 1.3 robustness hardening
+
+Five safeguards were added without changing VBench models, official thresholds,
+or score definitions:
+
+- **Nonzero GPU remapping:** `cuda:N` selects host GPU `N` through
+  `CUDA_VISIBLE_DEVICES=N`, while the isolated worker consistently uses `cuda:0`.
+- **Strict completion validation:** every core output must be nonempty, the run
+  manifest must report `success`, and frame/track/summary JSON must parse.
+- **Worker result key validation:** output keys must form an exact, unique match to
+  the input `(frame_index, logical_track_id)` keys before aggregation.
+- **Zero-scored-run rejection:** empty manifests and nonempty runs with no scored
+  human frames fail explicitly instead of emitting null successful scores.
+- **Partial-result preservation:** Human scoring, face/hand detection, and each
+  part classifier fail independently for non-CUDA crop errors. Successful Human
+  and part results remain available; CUDA, cuDNN, OOM, and device-side failures
+  still terminate the worker.
