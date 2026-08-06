@@ -381,16 +381,9 @@ class YOLOByteTrackPersonTracker:
         if completed.returncode != 0 or not destination.is_file() or destination.stat().st_size == 0:
             raise RuntimeError(f"H.264 visualization transcoding failed: {completed.stderr.strip()}")
 
-    def track_video(
-        self,
-        video_path: str,
-        output_dir: str,
-        save_visualization: bool = True,
-        save_raw_csv: bool = True,
-    ) -> VideoTrackingResult:
-        """Detect once per frame, associate, and promote only complete outputs."""
+    def track_video_in_memory(self, video_path: str) -> VideoTrackingResult:
+        """Detect and associate one video without creating any output files."""
         source = Path(video_path).expanduser().resolve()
-        destination = Path(output_dir).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(f"Input video does not exist: {source}")
         capture = cv2.VideoCapture(str(source))
@@ -423,106 +416,124 @@ class YOLOByteTrackPersonTracker:
             LOGGER.warning(message)
             warnings.append(message)
 
-        destination.parent.mkdir(parents=True, exist_ok=True)
         byte_tracker = self._new_byte_tracker()
         frames: List[FrameDetections] = []
         started = time.perf_counter()
-        prefix = f".{destination.name}.tmp-"
-        with tempfile.TemporaryDirectory(dir=destination.parent, prefix=prefix) as temporary_name:
-            temporary = Path(temporary_name)
-            writer: Optional[cv2.VideoWriter] = None
-            try:
-                if save_visualization:
-                    intermediate_video = temporary / "tracked_intermediate.mp4"
-                    writer = cv2.VideoWriter(
-                        str(intermediate_video),
-                        cv2.VideoWriter_fourcc(*"mp4v"),
-                        fps,
-                        (width, height),
-                    )
-                    if not writer.isOpened():
-                        raise RuntimeError(f"VideoWriter could not be created: {intermediate_video}")
-                frame_index = 0
-                while True:
-                    ok, frame_image = capture.read()
-                    if not ok:
-                        break
-                    raw_detections = self._raw_detections(
-                        frame_image, width, height, warnings, frame_index
-                    )
-                    tracked_detections = self._tracked_detections(
-                        byte_tracker, raw_detections, frame_image, width, height, warnings, frame_index
-                    )
-                    frames.append(
-                        FrameDetections(
-                            frame_index=frame_index,
-                            timestamp_sec=frame_index / fps,
-                            raw_detections=raw_detections,
-                            tracked_detections=tracked_detections,
-                        )
-                    )
-                    if writer is not None:
-                        self._draw_visualization(
-                            writer, frame_image, raw_detections, tracked_detections, height
-                        )
-                    frame_index += 1
-            finally:
-                capture.release()
-                if writer is not None:
-                    writer.release()
-
-            if save_visualization:
-                self._transcode_visualization(intermediate_video, temporary / "tracked.mp4")
-
-            runtime = time.perf_counter() - started
-            processed_frames = len(frames)
-            if processed_frames == 0:
-                raise RuntimeError(f"No frames could be decoded from video: {source}")
-            if declared_frames > 0 and declared_frames != processed_frames:
-                warnings.append(
-                    f"container declared {declared_frames} frames but {processed_frames} were decoded"
+        try:
+            frame_index = 0
+            while True:
+                ok, frame_image = capture.read()
+                if not ok:
+                    break
+                raw_detections = self._raw_detections(
+                    frame_image, width, height, warnings, frame_index
                 )
-            video = VideoInfo(
-                path=str(source),
-                width=width,
-                height=height,
-                fps=fps,
-                num_frames=processed_frames,
-                duration_sec=processed_frames / fps,
+                tracked_detections = self._tracked_detections(
+                    byte_tracker, raw_detections, frame_image, width, height,
+                    warnings, frame_index,
+                )
+                frames.append(FrameDetections(
+                    frame_index=frame_index,
+                    timestamp_sec=frame_index / fps,
+                    raw_detections=raw_detections,
+                    tracked_detections=tracked_detections,
+                ))
+                frame_index += 1
+        finally:
+            capture.release()
+
+        runtime = time.perf_counter() - started
+        processed_frames = len(frames)
+        if processed_frames == 0:
+            raise RuntimeError(f"No frames could be decoded from video: {source}")
+        if declared_frames > 0 and declared_frames != processed_frames:
+            warnings.append(
+                f"container declared {declared_frames} frames but {processed_frames} were decoded"
             )
-            result = VideoTrackingResult(
-                video=video,
-                frames=frames,
-                detector={
-                    "backend": "ultralytics",
-                    "model": "yolov8x",
-                    "weights": self.weights,
-                    "ultralytics_version": ultralytics.__version__,
-                    "person_class_id": self.person_class_id,
-                    "conf": self.conf,
-                    "iou": self.iou,
-                    "imgsz": self.imgsz,
-                },
-                tracker={
-                    "backend": "bytetrack",
-                    "config_path": self.tracker_config,
-                    "config": self.tracker_settings,
-                },
-                processing={
-                    "device": (
-                        f"cuda:{self.device}"
-                        if self._uses_cuda and self.device.isdigit()
-                        else self.device
-                    ),
-                    "half": self.half,
-                    "processed_frames": processed_frames,
-                    "runtime_sec": runtime,
-                    "fps_effective": processed_frames / runtime if runtime > 0 else 0.0,
-                },
-                tracks=compute_track_statistics(frames, processed_frames),
-                detection_summary=compute_detection_summary(frames, processed_frames),
-                warnings=warnings,
-            )
+        video = VideoInfo(
+            path=str(source), width=width, height=height, fps=fps,
+            num_frames=processed_frames, duration_sec=processed_frames / fps,
+        )
+        return VideoTrackingResult(
+            video=video,
+            frames=frames,
+            detector={
+                "backend": "ultralytics", "model": "yolov8x",
+                "weights": self.weights, "ultralytics_version": ultralytics.__version__,
+                "person_class_id": self.person_class_id, "conf": self.conf,
+                "iou": self.iou, "imgsz": self.imgsz,
+            },
+            tracker={
+                "backend": "bytetrack", "config_path": self.tracker_config,
+                "config": self.tracker_settings,
+            },
+            processing={
+                "device": (
+                    f"cuda:{self.device}"
+                    if self._uses_cuda and self.device.isdigit()
+                    else self.device
+                ),
+                "half": self.half, "processed_frames": processed_frames,
+                "runtime_sec": runtime,
+                "fps_effective": processed_frames / runtime if runtime > 0 else 0.0,
+            },
+            tracks=compute_track_statistics(frames, processed_frames),
+            detection_summary=compute_detection_summary(frames, processed_frames),
+            warnings=warnings,
+        )
+
+    def _write_tracking_visualization(
+        self, source: Path, result: VideoTrackingResult, output: Path
+    ) -> None:
+        """Render a stored in-memory tracking result without rerunning inference."""
+        capture = cv2.VideoCapture(str(source))
+        if not capture.isOpened():
+            capture.release()
+            raise RuntimeError(f"Video cannot be opened for visualization: {source}")
+        intermediate = output.parent / "tracked_intermediate.mp4"
+        writer = cv2.VideoWriter(
+            str(intermediate), cv2.VideoWriter_fourcc(*"mp4v"),
+            result.video.fps, (result.video.width, result.video.height),
+        )
+        if not writer.isOpened():
+            capture.release()
+            writer.release()
+            raise RuntimeError(f"VideoWriter could not be created: {intermediate}")
+        try:
+            for frame_result in result.frames:
+                ok, frame_image = capture.read()
+                if not ok:
+                    raise RuntimeError(
+                        f"Video decode ended before frame {frame_result.frame_index}: {source}"
+                    )
+                self._draw_visualization(
+                    writer, frame_image, frame_result.raw_detections,
+                    frame_result.tracked_detections, result.video.height,
+                )
+        finally:
+            capture.release()
+            writer.release()
+        self._transcode_visualization(intermediate, output)
+
+    def track_video(
+        self,
+        video_path: str,
+        output_dir: str,
+        save_visualization: bool = True,
+        save_raw_csv: bool = True,
+    ) -> VideoTrackingResult:
+        """Compute in memory, then atomically serialize the requested artifacts."""
+        source = Path(video_path).expanduser().resolve()
+        destination = Path(output_dir).expanduser().resolve()
+        result = self.track_video_in_memory(str(source))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        prefix = f".{destination.name}.tmp-"
+        with tempfile.TemporaryDirectory(dir=destination.parent, prefix=prefix) as name:
+            temporary = Path(name)
+            if save_visualization:
+                self._write_tracking_visualization(
+                    source, result, temporary / "tracked.mp4"
+                )
             write_tracking_outputs(result, temporary, save_raw_csv=save_raw_csv)
             self._promote_outputs(temporary, destination)
-            return result
+        return result

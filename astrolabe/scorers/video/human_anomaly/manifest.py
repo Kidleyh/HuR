@@ -4,11 +4,66 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
 
 import cv2
 
+from astrolabe.scorers.video.person_tracking.schemas import FrameDetections
+
 from .schema import HumanAnomalyInput, ManifestFailure
+
+
+def build_human_anomaly_entries(
+    frames: Sequence[FrameDetections],
+    track_id_to_logical_track_id: Mapping[int, int],
+    width: int,
+    height: int,
+) -> Tuple[List[HumanAnomalyInput], List[ManifestFailure]]:
+    """Build stable anomaly inputs directly from in-memory stitched tracking."""
+    selected: Dict[Tuple[int, int], HumanAnomalyInput] = {}
+    failures: List[ManifestFailure] = []
+    for frame in frames:
+        for detection in frame.tracked_detections:
+            logical_id = track_id_to_logical_track_id.get(detection.track_id)
+            try:
+                if logical_id is None:
+                    raise ValueError(
+                        f"source track {detection.track_id} has no logical track mapping"
+                    )
+                entry = HumanAnomalyInput(
+                    frame_index=frame.frame_index,
+                    logical_track_id=int(logical_id),
+                    source_track_id=detection.track_id,
+                    bbox_xyxy=_clipped_bbox(detection.bbox_xyxy, width, height),
+                    detection_confidence=detection.confidence,
+                )
+            except (TypeError, ValueError) as error:
+                failures.append(ManifestFailure(
+                    frame_index=frame.frame_index,
+                    logical_track_id=logical_id,
+                    source_track_id=detection.track_id,
+                    failure_reason=str(error),
+                ))
+                continue
+            key = (entry.frame_index, entry.logical_track_id)
+            previous = selected.get(key)
+            if previous is None or (
+                entry.detection_confidence, -entry.source_track_id
+            ) > (
+                previous.detection_confidence, -previous.source_track_id
+            ):
+                discarded = previous
+                selected[key] = entry
+            else:
+                discarded = entry
+            if previous is not None:
+                failures.append(ManifestFailure(
+                    frame_index=discarded.frame_index,
+                    logical_track_id=discarded.logical_track_id,
+                    source_track_id=discarded.source_track_id,
+                    failure_reason="duplicate person-frame detection discarded by confidence",
+                ))
+    return [selected[key] for key in sorted(selected)], failures
 
 
 def _video_dimensions(video_path: Path) -> Tuple[int, int]:

@@ -353,3 +353,38 @@ pytest -q tests/test_person_preprocessing_pipeline.py
 pytest -q
 git diff --check
 ```
+
+## 单进程内存式 Human Reward
+
+固定使用合并环境，默认只在标准输出返回最终JSON：
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate human-reward
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+
+python scripts/run_human_reward.py \
+  --video /absolute/path/to/input.mp4 \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
+```
+
+仅原子保存一个最终JSON：
+
+```bash
+python scripts/run_human_reward.py \
+  --video /absolute/path/to/input.mp4 \
+  --output outputs/reward.json \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
+```
+
+两种运行方式都只执行两遍视频读取，不写tracking、stitching、worker日志或可视化等中间文件。`--vbench-clip-model`应指向已部署的本地模型目录，避免运行时联网下载。
+
+测试：
+
+```bash
+pytest -q tests/test_human_reward*.py
+pytest -q tests/test_human_anomaly*.py
+git diff --check
+```

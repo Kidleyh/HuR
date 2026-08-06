@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
-from astrolabe.scorers.video.person_tracking.schemas import FrameDetections, RawDetection, TrackedDetection
+from astrolabe.scorers.video.person_tracking.schemas import (
+    FrameDetections, RawDetection, TrackedDetection, VideoTrackingResult,
+)
 
 from .schemas import Tracklet
 
@@ -17,6 +19,15 @@ class TrackingInput:
     source_dir: Path
     summary: Dict[str, Any]
     frames: List[FrameDetections]
+
+
+def tracking_input_from_result(result: VideoTrackingResult) -> TrackingInput:
+    """Adapt an in-memory tracking result without serialization round-trips."""
+    return TrackingInput(
+        source_dir=Path(result.video.path).expanduser().resolve().parent,
+        summary=result.summary_dict(),
+        frames=result.frames,
+    )
 
 
 def discover_tracking_results(input_path: Path, recursive: bool = False) -> List[Path]:
