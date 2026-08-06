@@ -21,6 +21,7 @@ from astrolabe.scorers.video.person_tracking.tracker import YOLOByteTrackPersonT
 from astrolabe.scorers.video.tracklet_stitching.io import tracking_input_from_result
 from astrolabe.scorers.video.tracklet_stitching.schemas import StitchingConfig
 from astrolabe.scorers.video.tracklet_stitching.stitcher import stitch_tracking
+from .visualization import write_human_reward_visualization
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_VBENCH_ROOT = Path(os.environ.get(
@@ -117,6 +118,7 @@ def _invalid_result(reason: str) -> Dict[str, Any]:
         "scored_person_frames": 0,
         "abnormal_person_frames": 0,
         "failed_person_frames": 0,
+        "visualization": None,
     }
 
 
@@ -143,16 +145,23 @@ class HumanRewardModel:
         anomaly_engine_factory: Optional[Callable[..., Any]] = None,
         stitcher: Optional[Callable[..., Any]] = None,
         release_callback: Optional[Callable[[], None]] = None,
+        visualization_writer: Optional[Callable[..., None]] = None,
     ) -> None:
         self.config = HumanRewardConfig.from_value(config)
         self._tracker_factory = tracker_factory or YOLOByteTrackPersonTracker
         self._anomaly_engine_factory = anomaly_engine_factory or HumanAnomalyEngine
         self._stitcher = stitcher or stitch_tracking
         self._release_callback = release_callback or _release_cuda_models
+        self._visualization_writer = (
+            visualization_writer or write_human_reward_visualization
+        )
         self._stitching_config = _load_stitching_config(self.config.stitching_config)
 
     def score_batch(
-        self, video_paths: Sequence[Union[str, Path]]
+        self,
+        video_paths: Sequence[Union[str, Path]],
+        *,
+        visualization_output: Optional[Union[str, Path]] = None,
     ) -> List[Dict[str, Any]]:
         """Score videos in order while loading each model family only once."""
         if isinstance(video_paths, (str, Path)):
@@ -163,8 +172,14 @@ class HumanRewardModel:
         videos = [Path(path).expanduser().resolve() for path in video_paths]
         if not videos:
             return []
+        if visualization_output is not None and len(videos) != 1:
+            raise ValueError(
+                "visualization_output supports single-video mode only"
+            )
         results: List[Optional[Dict[str, Any]]] = [None] * len(videos)
         prepared: List[Optional[_PreparedVideo]] = [None] * len(videos)
+        visualization_ready = False
+        visualization_frame_results: Sequence[Dict[str, Any]] = []
         tracker = None
         try:
             tracker = self._tracker_factory(
@@ -193,6 +208,8 @@ class HumanRewardModel:
                     )
                     if not entries:
                         results[index] = _invalid_result("no_person_detected")
+                        if visualization_output is not None:
+                            visualization_ready = True
                         continue
                     prepared[index] = _PreparedVideo(
                         video=video,
@@ -256,7 +273,11 @@ class HumanRewardModel:
                             "failed_person_frames": int(
                                 summary["failed_person_frames"]
                             ),
+                            "visualization": None,
                         }
+                        if visualization_output is not None:
+                            visualization_frame_results = frame_results
+                            visualization_ready = True
                     except Exception as error:
                         if _is_cuda_failure(error):
                             raise
@@ -270,10 +291,28 @@ class HumanRewardModel:
                 engine = None
                 self._release_callback()
 
+        if visualization_output is not None and visualization_ready:
+            destination = Path(visualization_output).expanduser().resolve()
+            result = results[0]
+            if result is None:
+                raise RuntimeError("Internal error: visualization result is missing")
+            self._visualization_writer(
+                videos[0], visualization_frame_results, result, destination
+            )
+            result["visualization"] = str(destination)
+
         if any(result is None for result in results):
             raise RuntimeError("Internal error: batch result was not populated")
         return [result for result in results if result is not None]
 
-    def score(self, video_path: Union[str, Path]) -> Dict[str, Any]:
+    def score(
+        self,
+        video_path: Union[str, Path],
+        visualization_output: Optional[Union[str, Path]] = None,
+    ) -> Dict[str, Any]:
         """Score one video through the shared batch implementation."""
-        return self.score_batch([video_path])[0]
+        if visualization_output is None:
+            return self.score_batch([video_path])[0]
+        return self.score_batch(
+            [video_path], visualization_output=visualization_output
+        )[0]

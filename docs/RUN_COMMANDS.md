@@ -379,6 +379,17 @@ python scripts/run_human_reward.py \
   --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
 ```
 
+单视频在全部模型释放后可选生成综合H.264/yuv420p可视化：
+
+```bash
+python scripts/run_human_reward.py \
+  --video /absolute/path/to/input.mp4 \
+  --output outputs/reward.json \
+  --visualization-output outputs/reward_visualization.mp4 \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
+```
+
 多个视频共享一次YOLO加载和一次VBench模型加载，输出一个顺序与输入一致的JSON数组：
 
 ```bash

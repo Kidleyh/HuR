@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video", action="append", required=True)
     parser.add_argument("--output")
+    parser.add_argument("--visualization-output")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--weights", default=str(defaults.yolo_weights))
     parser.add_argument("--tracker-config", default=str(defaults.tracker_config))
@@ -52,7 +53,13 @@ def _write_atomic(path: Path, result: Any) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if len(args.video) > 1 and args.visualization_output:
+        parser.error(
+            "--visualization-output supports single-video mode only; "
+            "use one --video"
+        )
     config = HumanRewardConfig(
         yolo_weights=Path(args.weights), tracker_config=Path(args.tracker_config),
         stitching_config=Path(args.stitching_config),
@@ -64,7 +71,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     model = HumanRewardModel(config)
     result = (
-        model.score(args.video[0])
+        model.score(
+            args.video[0], visualization_output=args.visualization_output
+        )
         if len(args.video) == 1
         else model.score_batch(args.video)
     )

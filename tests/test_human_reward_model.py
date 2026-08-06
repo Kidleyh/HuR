@@ -122,6 +122,7 @@ def test_score_passes_all_stages_in_memory_without_intermediate_files(
         "logical_track_count": 1, "observed_person_frames": 2,
         "scored_person_frames": 2, "abnormal_person_frames": 1,
         "failed_person_frames": 0,
+        "visualization": None,
     }
 
 
@@ -280,6 +281,7 @@ def test_no_person_and_one_failure_do_not_block_valid_video(tmp_path):
         "micro_score": None, "macro_score": None, "logical_track_count": 0,
         "observed_person_frames": 0, "scored_person_frames": 0,
         "abnormal_person_frames": 0, "failed_person_frames": 0,
+        "visualization": None,
     }
     assert results[1]["valid"] is False
     assert results[1]["reason"].startswith("tracking_failed: ValueError:")
@@ -300,6 +302,66 @@ def test_score_delegates_to_single_element_batch(tmp_path, monkeypatch):
     video = tmp_path / "sample.mp4"
     assert model.score(video) is expected
     assert calls == [[video]]
+
+
+def test_visualization_runs_after_model_release_without_reinference(tmp_path):
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"video")
+    destination = tmp_path / "result.mp4"
+    events = []
+
+    class Tracker:
+        def __init__(self, **kwargs):
+            events.append("tracker_init")
+
+        def track_video_in_memory(self, source):
+            events.append("tracking")
+            return tracking_result(video)
+
+    class Engine:
+        def __init__(self, **kwargs):
+            events.append("engine_init")
+
+        def score_video(self, source, entries):
+            events.append("anomaly")
+            return [
+                {
+                    "frame_index": item.frame_index,
+                    "logical_track_id": item.logical_track_id,
+                    "bbox_xyxy": item.bbox_xyxy,
+                    "human": {"scored": True, "abnormal": index == 1},
+                    "faces": [], "hands": [], "person_abnormal": index == 1,
+                }
+                for index, item in enumerate(entries)
+            ]
+
+        def close(self):
+            events.append("engine_close")
+
+    def visualize(source, frame_results, summary, output):
+        events.append("visualize")
+        assert source == video.resolve()
+        assert len(frame_results) == 2
+        assert summary["reward"] == 0.5
+        output.write_bytes(b"mp4")
+
+    model = HumanRewardModel(
+        config(tmp_path), tracker_factory=Tracker, anomaly_engine_factory=Engine,
+        stitcher=lambda data, cfg: SimpleNamespace(
+            track_id_to_logical_track_id={1: 0}
+        ),
+        release_callback=lambda: events.append("release"),
+        visualization_writer=visualize,
+    )
+    result = model.score(video, visualization_output=destination)
+
+    assert result["reward"] == 0.5
+    assert result["visualization"] == str(destination.resolve())
+    assert destination.read_bytes() == b"mp4"
+    assert events == [
+        "tracker_init", "tracking", "release", "engine_init", "anomaly",
+        "engine_close", "release", "visualize",
+    ]
 
 
 def test_prepared_video_retains_only_anomaly_inputs():
