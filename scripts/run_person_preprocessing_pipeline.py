@@ -31,6 +31,7 @@ from astrolabe.scorers.video.tracklet_stitching.serialization import (
 )
 from astrolabe.scorers.video.tracklet_stitching.stitcher import stitch_tracking
 from scripts.run_tracklet_stitching import is_complete_result
+from scripts.run_person_human_anomaly import main as run_human_anomaly_main
 
 LOGGER = logging.getLogger("run_person_preprocessing_pipeline")
 
@@ -42,6 +43,11 @@ def pipeline_output_dirs(
     validate_run_name(name)
     root = output_root.expanduser().resolve()
     return root / f"{name}_person_tracking", root / f"{name}_tracklet_stitching"
+
+
+def human_anomaly_output_dir(name: str, output_root: Path) -> Path:
+    validate_run_name(name)
+    return output_root.expanduser().resolve() / f"{name}_human_anomaly"
 
 
 def validate_run_name(name: str) -> None:
@@ -132,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--human-anomaly", action="store_true")
+    parser.add_argument("--vbench-root")
+    parser.add_argument("--vbench-cache-dir")
+    parser.add_argument("--vbench-clip-model")
+    parser.add_argument("--vbench-conda-env", default="vbench2-human-anomaly")
+    parser.add_argument("--vbench-device", default="cuda:0")
+    parser.add_argument("--crop-batch-size", type=int, default=128)
+    parser.add_argument("--visualize-human-anomaly", action="store_true")
     return parser
 
 
@@ -152,6 +166,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
     output_root = Path(args.output_root).expanduser().resolve()
     tracking_output, stitching_output = pipeline_output_dirs(args.name, output_root)
+    anomaly_output = human_anomaly_output_dir(args.name, output_root)
+    if args.human_anomaly and not all(
+        (args.vbench_root, args.vbench_cache_dir, args.vbench_clip_model)
+    ):
+        LOGGER.error(
+            "--human-anomaly requires --vbench-root, --vbench-cache-dir and "
+            "--vbench-clip-model"
+        )
+        return 2
     output_root.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     try:
@@ -196,11 +219,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                 args.save_visualization,
             )
             LOGGER.info("Stage tracklet_stitching: completed %s", stitching_output)
+        if args.human_anomaly:
+            anomaly_args = [
+                "--video", str(video), "--stitching-dir", str(stitching_output),
+                "--output-dir", str(anomaly_output), "--vbench-root", args.vbench_root,
+                "--vbench-cache-dir", args.vbench_cache_dir,
+                "--vbench-clip-model", args.vbench_clip_model,
+                "--vbench-conda-env", args.vbench_conda_env,
+                "--device", args.vbench_device,
+                "--crop-batch-size", str(args.crop_batch_size),
+            ]
+            if args.visualize_human_anomaly:
+                anomaly_args.append("--visualize")
+            if args.overwrite:
+                anomaly_args.append("--overwrite")
+            if run_human_anomaly_main(anomaly_args) != 0:
+                raise RuntimeError("Stage human_anomaly failed")
+            LOGGER.info("Stage human_anomaly: completed %s", anomaly_output)
         LOGGER.info(
-            "Pipeline completed in %.2fs\nperson_tracking=%s\ntracklet_stitching=%s",
+            "Pipeline completed in %.2fs\nperson_tracking=%s\ntracklet_stitching=%s%s",
             time.perf_counter() - started,
             tracking_output,
             stitching_output,
+            f"\nhuman_anomaly={anomaly_output}" if args.human_anomaly else "",
         )
         return 0
     except Exception:

@@ -26,6 +26,12 @@ def test_pipeline_output_dirs_reject_unsafe_names(tmp_path):
             pipeline.pipeline_output_dirs(name, tmp_path / "outputs")
 
 
+def test_human_anomaly_output_uses_same_explicit_name(tmp_path):
+    assert pipeline.human_anomaly_output_dir("run42", tmp_path / "outputs") == (
+        tmp_path / "outputs/run42_human_anomaly"
+    ).resolve()
+
+
 def test_pipeline_runs_both_stages_into_exact_directories(tmp_path, monkeypatch):
     video = tmp_path / "sample.mp4"
     video.write_bytes(b"video")
@@ -109,6 +115,31 @@ def test_pipeline_help_works_outside_repository(tmp_path):
     assert completed.returncode == 0, completed.stderr
     assert "--name" in completed.stdout
     assert "--output-root" in completed.stdout
+
+
+def test_pipeline_invokes_optional_human_anomaly_stage(tmp_path, monkeypatch):
+    video = tmp_path / "sample.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(pipeline, "_tracking_complete", lambda *args: True)
+    monkeypatch.setattr(pipeline, "is_complete_result", lambda *args: True)
+    captured = {}
+
+    def successful(args):
+        captured["args"] = args
+        return 0
+
+    monkeypatch.setattr(pipeline, "run_human_anomaly_main", successful)
+    code = pipeline.main([
+        "--input", str(video), "--name", "stage13",
+        "--output-root", str(tmp_path / "outputs"), "--no-save-visualization",
+        "--human-anomaly", "--vbench-root", str(tmp_path / "VBench"),
+        "--vbench-cache-dir", str(tmp_path / "cache"),
+        "--vbench-clip-model", str(tmp_path / "clip"),
+    ])
+    assert code == 0
+    args = captured["args"]
+    assert str(tmp_path / "outputs/stage13_tracklet_stitching") in args
+    assert str(tmp_path / "outputs/stage13_human_anomaly") in args
 
 
 import pytest

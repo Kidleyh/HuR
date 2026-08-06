@@ -3,6 +3,20 @@
 本文档是人体预处理项目唯一的运行命令清单，统一维护检测跟踪、离线
 tracklet stitching、测试和结果检查命令。每次功能修改后，应同步更新本文件。
 
+## 远程 GPU 节点
+
+HuR 工作区后续统一通过本机 SSH 配置中的 GPU 节点连接：
+
+```bash
+ssh kaifa-test
+```
+
+该节点使用共享工作区：
+
+```text
+/gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+```
+
 ## 公共环境准备
 
 ```bash
@@ -276,4 +290,57 @@ python scripts/run_person_preprocessing_pipeline.py \
 ```bash
 python -m compileall scripts/run_person_preprocessing_pipeline.py
 pytest -q tests/test_person_preprocessing_pipeline.py
+```
+
+## Stage 1.3：逐人物 VBench Human Anomaly
+
+当前节点必须能看到 CUDA；模型环境保持独立：
+
+```bash
+python scripts/run_person_human_anomaly.py \
+  --video /absolute/path/to/video.mp4 \
+  --stitching-dir outputs/sample_tracklet_stitching \
+  --output-dir outputs/sample_human_anomaly \
+  --vbench-root /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0 \
+  --vbench-cache-dir /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/vbench2 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32 \
+  --vbench-conda-env vbench2-human-anomaly \
+  --device cuda:0 \
+  --crop-batch-size 128 \
+  --visualize \
+  --overwrite
+```
+
+包含 Stage 1.3 的统一端到端命令：
+
+```bash
+python scripts/run_person_preprocessing_pipeline.py \
+  --input /absolute/path/to/video.mp4 \
+  --name sample \
+  --output-root outputs \
+  --weights checkpoints/yolo/yolov8x.pt \
+  --device 0 \
+  --half \
+  --save-visualization \
+  --human-anomaly \
+  --vbench-root /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0 \
+  --vbench-cache-dir /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/vbench2 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32 \
+  --vbench-device cuda:0 \
+  --visualize-human-anomaly \
+  --overwrite
+```
+
+Stage 1.3 无模型单元测试：
+
+```bash
+python -m compileall \
+  astrolabe/scorers/video/human_anomaly \
+  scripts/run_person_human_anomaly.py \
+  scripts/vbench_human_anomaly_worker.py
+
+pytest -q \
+  tests/test_human_anomaly_manifest.py \
+  tests/test_human_anomaly_aggregation.py \
+  tests/test_human_anomaly_subprocess.py
 ```

@@ -24,6 +24,11 @@ Run every currently implemented preprocessing stage for one video with
 `scripts/run_person_preprocessing_pipeline.py`; each stage is written to a separate
 `outputs/<name>_<stage_name>/` directory selected with the required `--name` option.
 
+Per-logical-track VBench Human Anomaly integration is documented in
+[docs/human_anomaly.md](docs/human_anomaly.md).
+The implementation and H100 validation report is available in
+[docs/HUMAN_ANOMALY_IMPLEMENTATION_NOTES.md](docs/HUMAN_ANOMALY_IMPLEMENTATION_NOTES.md).
+
 
 ## Pretrained Checkpoints and Data
 
