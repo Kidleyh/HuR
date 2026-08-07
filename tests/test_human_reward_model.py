@@ -127,7 +127,17 @@ def test_score_passes_all_stages_in_memory_without_intermediate_files(
     assert result["reward"] == result["micro_score"] == 0.5
     assert result["persons"][0]["score"] == {
         "binary_score": 0.5, "observed_frames": 2, "scored_frames": 2,
-        "abnormal_frames": 1, "failed_frames": 0,
+        "failed_frames": 0, "scored_frame_coverage": 1.0,
+        "abnormal_frames": 1,
+        "human_anomaly_rate": 0.5,
+        "face_anomaly_rate": 0.0,
+        "hand_anomaly_rate": 0.0,
+        "face_detected_frames": 0,
+        "face_detection_coverage": 0.0,
+        "hand_detected_frames": 0,
+        "hand_detection_coverage": 0.0,
+        "median_bbox_area_ratio": 200 / (32 * 24),
+        "boundary_truncation_rate": 0.0,
     }
     assert [frame["frame_index"] for frame in result["persons"][0]["frames"]] == [0, 1]
     assert result["visualization"] is None

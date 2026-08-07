@@ -62,10 +62,30 @@ def test_person_centric_join_preserves_tracks_gaps_results_and_video_scores():
         {
             "logical_track_id": 0, "observed_frames": 3, "scored_frames": 3,
             "abnormal_frames": 1, "anatomy_quality_score": 2 / 3,
+            "scored_frame_coverage": 1.0,
+            "human_anomaly_rate": 1 / 3,
+            "face_anomaly_rate": 0.0,
+            "hand_anomaly_rate": 0.0,
+            "face_detected_frames": 1,
+            "face_detection_coverage": 1 / 3,
+            "hand_detected_frames": 1,
+            "hand_detection_coverage": 1 / 3,
+            "median_bbox_area_ratio": 0.123,
+            "boundary_truncation_rate": 0.25,
         },
         {
             "logical_track_id": 1, "observed_frames": 1, "scored_frames": 1,
             "abnormal_frames": 0, "anatomy_quality_score": 1.0,
+            "scored_frame_coverage": 1.0,
+            "human_anomaly_rate": 0.0,
+            "face_anomaly_rate": 0.0,
+            "hand_anomaly_rate": 0.0,
+            "face_detected_frames": 0,
+            "face_detection_coverage": 0.0,
+            "hand_detected_frames": 0,
+            "hand_detection_coverage": 0.0,
+            "median_bbox_area_ratio": 0.08,
+            "boundary_truncation_rate": 0.0,
         },
     ]
     summary = {
@@ -97,7 +117,17 @@ def test_person_centric_join_preserves_tracks_gaps_results_and_video_scores():
     assert middle["hands"] == frame_results[0]["hands"]
     assert first["score"] == {
         "binary_score": 2 / 3, "observed_frames": 3, "scored_frames": 3,
-        "abnormal_frames": 1, "failed_frames": 0,
+        "failed_frames": 0, "scored_frame_coverage": 1.0,
+        "abnormal_frames": 1,
+        "human_anomaly_rate": 1 / 3,
+        "face_anomaly_rate": 0.0,
+        "hand_anomaly_rate": 0.0,
+        "face_detected_frames": 1,
+        "face_detection_coverage": 1 / 3,
+        "hand_detected_frames": 1,
+        "hand_detection_coverage": 1 / 3,
+        "median_bbox_area_ratio": 0.123,
+        "boundary_truncation_rate": 0.25,
     }
     assert first["temporal"] == {}
     assert result["video_score"] == {
@@ -122,10 +152,30 @@ def test_person_score_supports_unscored_person_without_division():
         track_scores=[{
             "logical_track_id": 3, "observed_frames": 1, "scored_frames": 0,
             "abnormal_frames": 0, "anatomy_quality_score": None,
+            "scored_frame_coverage": 0.0,
+            "human_anomaly_rate": 0.0,
+            "face_anomaly_rate": 0.0,
+            "hand_anomaly_rate": 0.0,
+            "face_detected_frames": 0,
+            "face_detection_coverage": 0.0,
+            "hand_detected_frames": 0,
+            "hand_detection_coverage": 0.0,
+            "median_bbox_area_ratio": 0.12,
+            "boundary_truncation_rate": 0.0,
         }],
         summary={"video_micro_score": 1.0, "video_macro_score": 1.0},
     )
     assert built["persons"][0]["score"] == {
         "binary_score": None, "observed_frames": 1, "scored_frames": 0,
-        "abnormal_frames": 0, "failed_frames": 1,
+        "failed_frames": 1, "scored_frame_coverage": 0.0,
+        "abnormal_frames": 0,
+        "human_anomaly_rate": 0.0,
+        "face_anomaly_rate": 0.0,
+        "hand_anomaly_rate": 0.0,
+        "face_detected_frames": 0,
+        "face_detection_coverage": 0.0,
+        "hand_detected_frames": 0,
+        "hand_detection_coverage": 0.0,
+        "median_bbox_area_ratio": 0.12,
+        "boundary_truncation_rate": 0.0,
     }
