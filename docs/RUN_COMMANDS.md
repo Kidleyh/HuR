@@ -423,3 +423,37 @@ values live in `result["video_score"]`; top-level `reward`, `micro_score`, and
 The optional visualization reads the person-centric structure through a
 lightweight `(logical_track_id, person_frame_index)` frame index. It does not run
 tracking or Human Anomaly again.
+
+## Human Temporal Consistency (RTMPose)
+
+Human Temporal is optional and requires an already-installed MMPose plus local
+RTMPose config/checkpoint files. It never invokes another person detector and
+never downloads model files:
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate human-reward
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+
+python scripts/run_human_reward.py \
+  --video /absolute/path/to/input.mp4 \
+  --output outputs/reward_with_human_temporal.json \
+  --visualization-output outputs/reward_with_human_temporal.mp4 \
+  --device cuda:0 \
+  --human-temporal \
+  --human-temporal-pose-config /absolute/path/to/rtmpose_config.py \
+  --human-temporal-pose-checkpoint /absolute/path/to/rtmpose_checkpoint.pth \
+  --human-temporal-keypoint-threshold 0.3 \
+  --human-temporal-max-frame-gap 2
+```
+
+The result is attached at `person["temporal"]["human"]`; its `score` is currently
+`null` and therefore does not change binary person scores or video reward.
+
+Tests that do not require MMPose or a GPU:
+
+```bash
+pytest -q tests/test_human_temporal*.py
+pytest -q tests/test_human_reward*.py
+git diff --check
+```

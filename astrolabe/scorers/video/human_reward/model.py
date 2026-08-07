@@ -17,6 +17,11 @@ from astrolabe.scorers.video.human_anomaly.engine import (
 )
 from astrolabe.scorers.video.human_anomaly.manifest import build_human_anomaly_entries
 from astrolabe.scorers.video.human_anomaly.validation import validate_worker_results
+from astrolabe.scorers.video.human_temporal.engine import HumanTemporalEngine
+from astrolabe.scorers.video.human_temporal.schema import (
+    HumanTemporalConfig,
+    failed_human_temporal_result,
+)
 from astrolabe.scorers.video.person_tracking.tracker import YOLOByteTrackPersonTracker
 from astrolabe.scorers.video.tracklet_stitching.io import tracking_input_from_result
 from astrolabe.scorers.video.tracklet_stitching.schemas import StitchingConfig
@@ -52,6 +57,11 @@ class HumanRewardConfig:
     imgsz: int = 640
     half: bool = True
     crop_batch_size: int = 128
+    human_temporal: bool = False
+    human_temporal_pose_config: Optional[Path] = None
+    human_temporal_pose_checkpoint: Optional[Path] = None
+    human_temporal_keypoint_threshold: float = 0.3
+    human_temporal_max_frame_gap: int = 2
 
     def __post_init__(self) -> None:
         for name in ("yolo_weights", "tracker_config", "stitching_config", "vbench_root"):
@@ -64,8 +74,36 @@ class HumanRewardConfig:
         object.__setattr__(
             self, "vbench_clip_model", Path(clip_model).expanduser().resolve()
         )
+        for name in (
+            "human_temporal_pose_config", "human_temporal_pose_checkpoint"
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, Path(value).expanduser().resolve())
         if self.crop_batch_size <= 0:
             raise ValueError("crop_batch_size must be positive")
+        if type(self.human_temporal) is not bool:
+            raise ValueError("human_temporal must be a bool")
+        if self.human_temporal:
+            if self.human_temporal_pose_config is None:
+                raise ValueError(
+                    "human_temporal_pose_config is required when Human Temporal is enabled"
+                )
+            if self.human_temporal_pose_checkpoint is None:
+                raise ValueError(
+                    "human_temporal_pose_checkpoint is required when Human Temporal is enabled"
+                )
+            for name in (
+                "human_temporal_pose_config", "human_temporal_pose_checkpoint"
+            ):
+                if not getattr(self, name).is_file():
+                    raise FileNotFoundError(
+                        f"{name} does not exist: {getattr(self, name)}"
+                    )
+        if not 0.0 <= self.human_temporal_keypoint_threshold <= 1.0:
+            raise ValueError("human_temporal_keypoint_threshold must be in [0, 1]")
+        if self.human_temporal_max_frame_gap < 1:
+            raise ValueError("human_temporal_max_frame_gap must be positive")
 
     @classmethod
     def from_value(
@@ -152,6 +190,7 @@ class HumanRewardModel:
         *,
         tracker_factory: Optional[Callable[..., Any]] = None,
         anomaly_engine_factory: Optional[Callable[..., Any]] = None,
+        temporal_engine_factory: Optional[Callable[..., Any]] = None,
         stitcher: Optional[Callable[..., Any]] = None,
         release_callback: Optional[Callable[[], None]] = None,
         visualization_writer: Optional[Callable[..., None]] = None,
@@ -159,6 +198,7 @@ class HumanRewardModel:
         self.config = HumanRewardConfig.from_value(config)
         self._tracker_factory = tracker_factory or YOLOByteTrackPersonTracker
         self._anomaly_engine_factory = anomaly_engine_factory or HumanAnomalyEngine
+        self._temporal_engine_factory = temporal_engine_factory or HumanTemporalEngine
         self._stitcher = stitcher or stitch_tracking
         self._release_callback = release_callback or _release_cuda_models
         self._visualization_writer = (
@@ -314,6 +354,44 @@ class HumanRewardModel:
                 if callable(close):
                     close()
                 engine = None
+                self._release_callback()
+
+        if self.config.human_temporal and any(
+            result is not None and result.get("valid") is True for result in results
+        ):
+            temporal_engine = None
+            try:
+                temporal_engine = self._temporal_engine_factory(
+                    config=HumanTemporalConfig(
+                        pose_config=self.config.human_temporal_pose_config,
+                        pose_checkpoint=self.config.human_temporal_pose_checkpoint,
+                        keypoint_threshold=(
+                            self.config.human_temporal_keypoint_threshold
+                        ),
+                        max_frame_gap=self.config.human_temporal_max_frame_gap,
+                    ),
+                    device=self.config.device,
+                )
+                for index, item in enumerate(prepared):
+                    result = results[index]
+                    if item is None or result is None or result.get("valid") is not True:
+                        continue
+                    try:
+                        temporal_engine.score_video(item.video, result["persons"])
+                    except Exception as error:
+                        if _is_cuda_failure(error):
+                            raise
+                        for person in result["persons"]:
+                            person.setdefault("temporal", {})["human"] = (
+                                failed_human_temporal_result(
+                                    len(person["frames"]), error
+                                )
+                            )
+            finally:
+                close = getattr(temporal_engine, "close", None)
+                if callable(close):
+                    close()
+                temporal_engine = None
                 self._release_callback()
 
         if visualization_output is not None and visualization_ready:

@@ -1,4 +1,4 @@
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -466,3 +466,80 @@ def test_cuda_failure_terminates_batch(tmp_path):
         HumanRewardModel(
             config(tmp_path), tracker_factory=Tracker, release_callback=lambda: None
         ).score_batch([video])
+
+
+def test_temporal_batch_reuses_engine_and_preserves_binary_rewards(tmp_path):
+    videos = [tmp_path / "first.mp4", tmp_path / "second.mp4"]
+    for video in videos:
+        video.write_bytes(b"video")
+    pose_config, checkpoint = tmp_path / "pose.py", tmp_path / "pose.pth"
+    pose_config.write_text("config")
+    checkpoint.write_bytes(b"checkpoint")
+    events = []
+
+    class Tracker:
+        def __init__(self, **kwargs):
+            pass
+
+        def track_video_in_memory(self, source):
+            return tracking_result(Path(source))
+
+    class Engine:
+        def __init__(self, **kwargs):
+            pass
+
+        def score_video(self, source, entries):
+            return [
+                {
+                    "frame_index": item.frame_index,
+                    "logical_track_id": item.logical_track_id,
+                    "human": {"scored": True, "abnormal": False},
+                    "faces": [], "hands": [], "person_abnormal": False,
+                }
+                for item in entries
+            ]
+
+        def close(self):
+            pass
+
+    class TemporalEngine:
+        def __init__(self, **kwargs):
+            events.append("temporal_init")
+
+        def score_video(self, source, persons):
+            events.append(f"temporal:{Path(source).stem}")
+            for person in persons:
+                person["temporal"]["human"] = {"valid": True, "score": None}
+
+        def close(self):
+            events.append("temporal_close")
+
+    enabled = replace(
+        config(tmp_path), human_temporal=True,
+        human_temporal_pose_config=pose_config,
+        human_temporal_pose_checkpoint=checkpoint,
+    )
+    results = HumanRewardModel(
+        enabled, tracker_factory=Tracker, anomaly_engine_factory=Engine,
+        temporal_engine_factory=TemporalEngine,
+        stitcher=lambda data, cfg: SimpleNamespace(
+            track_id_to_logical_track_id={1: 0}
+        ),
+        release_callback=lambda: events.append("release"),
+    ).score_batch(videos)
+
+    assert events.count("temporal_init") == 1
+    assert events == [
+        "release", "release", "temporal_init", "temporal:first",
+        "temporal:second", "temporal_close", "release",
+    ]
+    assert [result["reward"] for result in results] == [1.0, 1.0]
+    assert [result["micro_score"] for result in results] == [1.0, 1.0]
+    assert [result["macro_score"] for result in results] == [1.0, 1.0]
+    assert [
+        result["persons"][0]["score"]["binary_score"] for result in results
+    ] == [1.0, 1.0]
+    assert all(
+        result["persons"][0]["temporal"]["human"]["score"] is None
+        for result in results
+    )

@@ -35,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--half", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--crop-batch-size", type=int, default=128)
+    parser.add_argument("--human-temporal", action="store_true")
+    parser.add_argument("--human-temporal-pose-config")
+    parser.add_argument("--human-temporal-pose-checkpoint")
+    parser.add_argument(
+        "--human-temporal-keypoint-threshold", type=float, default=0.3
+    )
+    parser.add_argument("--human-temporal-max-frame-gap", type=int, default=2)
     return parser
 
 
@@ -68,6 +75,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         vbench_clip_model=Path(args.vbench_clip_model),
         conf=args.conf, iou=args.iou, imgsz=args.imgsz, half=args.half,
         crop_batch_size=args.crop_batch_size,
+        human_temporal=args.human_temporal,
+        human_temporal_pose_config=(
+            Path(args.human_temporal_pose_config)
+            if args.human_temporal_pose_config else None
+        ),
+        human_temporal_pose_checkpoint=(
+            Path(args.human_temporal_pose_checkpoint)
+            if args.human_temporal_pose_checkpoint else None
+        ),
+        human_temporal_keypoint_threshold=(
+            args.human_temporal_keypoint_threshold
+        ),
+        human_temporal_max_frame_gap=args.human_temporal_max_frame_gap,
     )
     model = HumanRewardModel(config)
     result = (

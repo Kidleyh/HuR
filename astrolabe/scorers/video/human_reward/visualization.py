@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence, Tuple
 import cv2
 import imageio_ffmpeg
 
+from astrolabe.scorers.video.human_temporal.metrics import BODY_BONES
 from .person_centric import build_frame_to_person_refs
 
 NORMAL_COLOR = (0, 200, 0)
@@ -66,7 +67,11 @@ def _draw_summary(frame: Any, summary: Mapping[str, Any]) -> None:
 
 
 def _draw_person(
-    frame: Any, logical_track_id: int, item: Mapping[str, Any]
+    frame: Any,
+    logical_track_id: int,
+    item: Mapping[str, Any],
+    temporal_human: Mapping[str, Any],
+    temporal_metric: Mapping[str, Any],
 ) -> None:
     height, width = frame.shape[:2]
     human = item.get("human", {})
@@ -87,6 +92,44 @@ def _draw_person(
         cv2.FONT_HERSHEY_SIMPLEX,
         0.48, person_color, 2, cv2.LINE_AA,
     )
+    pose = item.get("human_pose", {})
+    keypoints = pose.get("keypoints_xy", [])
+    keypoint_scores = pose.get("keypoint_scores", [])
+    name_to_index = temporal_human.get("keypoint_name_to_index", {})
+    threshold = float(temporal_human.get("keypoint_threshold", 0.3))
+    skeleton_color = (255, 200, 0)
+    valid_point_indices = set()
+    for first_name, second_name in BODY_BONES:
+        first_index = name_to_index.get(first_name)
+        second_index = name_to_index.get(second_name)
+        if (
+            first_index is None or second_index is None
+            or first_index >= len(keypoints) or second_index >= len(keypoints)
+            or first_index >= len(keypoint_scores) or second_index >= len(keypoint_scores)
+            or float(keypoint_scores[first_index]) < threshold
+            or float(keypoint_scores[second_index]) < threshold
+        ):
+            continue
+        first_point = tuple(int(round(value)) for value in keypoints[first_index])
+        second_point = tuple(int(round(value)) for value in keypoints[second_index])
+        cv2.line(frame, first_point, second_point, skeleton_color, 2, cv2.LINE_AA)
+        valid_point_indices.update((first_index, second_index))
+    for index in valid_point_indices:
+        point = tuple(int(round(value)) for value in keypoints[index])
+        cv2.circle(frame, point, 3, skeleton_color, -1, cv2.LINE_AA)
+    if temporal_human:
+        cv2.putText(
+            frame,
+            "Struct=" + _probability_text(temporal_metric.get("bone_length_jump"))
+            + " Motion="
+            + _probability_text(temporal_metric.get("joint_acceleration")),
+            (x1, y1 - 28 if y1 >= 150 else 153),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            skeleton_color,
+            1,
+            cv2.LINE_AA,
+        )
     for category in ("faces", "hands"):
         part_name = category[:-1].capitalize()
         for part in item.get(category, []):
@@ -118,6 +161,12 @@ def write_human_reward_visualization(
         int(person["logical_track_id"]): person for person in result["persons"]
     }
     frame_to_person_refs = build_frame_to_person_refs(result["persons"])
+    temporal_metrics = {}
+    for person in result["persons"]:
+        logical_id = int(person["logical_track_id"])
+        human_temporal = person.get("temporal", {}).get("human", {})
+        for metric in human_temporal.get("frame_metrics", []):
+            temporal_metrics[(logical_id, int(metric["frame_index"]))] = metric
 
     with tempfile.TemporaryDirectory(
         dir=output.parent, prefix=f".{output.name}.tmp-"
@@ -156,7 +205,16 @@ def write_human_reward_visualization(
                     frame_index, []
                 ):
                     item = persons[logical_track_id]["frames"][person_frame_index]
-                    _draw_person(frame, logical_track_id, item)
+                    temporal_human = persons[logical_track_id].get(
+                        "temporal", {}
+                    ).get("human", {})
+                    _draw_person(
+                        frame,
+                        logical_track_id,
+                        item,
+                        temporal_human,
+                        temporal_metrics.get((logical_track_id, frame_index), {}),
+                    )
                 writer.write(frame)
                 frame_index += 1
         finally:

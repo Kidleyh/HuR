@@ -119,3 +119,19 @@ def test_cli_rejects_batch_visualization_before_model_load(
     assert error.value.code == 2
     assert "supports single-video mode only" in capsys.readouterr().err
     assert loaded == []
+
+
+def test_parser_accepts_explicit_local_human_temporal_resources(tmp_path):
+    args = run_human_reward.build_parser().parse_args([
+        "--video", str(tmp_path / "input.mp4"),
+        "--human-temporal",
+        "--human-temporal-pose-config", str(tmp_path / "pose.py"),
+        "--human-temporal-pose-checkpoint", str(tmp_path / "pose.pth"),
+        "--human-temporal-keypoint-threshold", "0.4",
+        "--human-temporal-max-frame-gap", "3",
+    ])
+    assert args.human_temporal is True
+    assert args.human_temporal_pose_config == str(tmp_path / "pose.py")
+    assert args.human_temporal_pose_checkpoint == str(tmp_path / "pose.pth")
+    assert args.human_temporal_keypoint_threshold == 0.4
+    assert args.human_temporal_max_frame_gap == 3
