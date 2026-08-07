@@ -116,14 +116,21 @@ def test_score_passes_all_stages_in_memory_without_intermediate_files(
         "load_tracking", "tracking", "stitching", "release",
         "load_anomaly", "anomaly", "close_anomaly", "release",
     ]
-    assert result == {
-        "valid": True, "reason": None,
-        "reward": 0.5, "micro_score": 0.5, "macro_score": 0.5,
-        "logical_track_count": 1, "observed_person_frames": 2,
-        "scored_person_frames": 2, "abnormal_person_frames": 1,
-        "failed_person_frames": 0,
-        "visualization": None,
+    assert result["valid"] is True
+    assert result["video"] == {
+        "path": str(video.resolve()), "width": 32, "height": 24,
+        "fps": 10.0, "num_frames": 2,
     }
+    assert result["video_score"] == {
+        "reward": 0.5, "micro_score": 0.5, "macro_score": 0.5,
+    }
+    assert result["reward"] == result["micro_score"] == 0.5
+    assert result["persons"][0]["score"] == {
+        "binary_score": 0.5, "observed_frames": 2, "scored_frames": 2,
+        "abnormal_frames": 1, "failed_frames": 0,
+    }
+    assert [frame["frame_index"] for frame in result["persons"][0]["frames"]] == [0, 1]
+    assert result["visualization"] is None
 
 
 def test_score_releases_tracking_before_loading_anomaly(tmp_path):
@@ -277,7 +284,10 @@ def test_no_person_and_one_failure_do_not_block_valid_video(tmp_path):
     results = model.score_batch(videos)
 
     assert results[0] == {
-        "valid": False, "reason": "no_person_detected", "reward": None,
+        "valid": False, "reason": "no_person_detected",
+        "video": None, "persons": [],
+        "video_score": {"reward": None, "micro_score": None, "macro_score": None},
+        "reward": None,
         "micro_score": None, "macro_score": None, "logical_track_count": 0,
         "observed_person_frames": 0, "scored_person_frames": 0,
         "abnormal_person_frames": 0, "failed_person_frames": 0,
@@ -338,11 +348,11 @@ def test_visualization_runs_after_model_release_without_reinference(tmp_path):
         def close(self):
             events.append("engine_close")
 
-    def visualize(source, frame_results, summary, output):
+    def visualize(source, result, output):
         events.append("visualize")
         assert source == video.resolve()
-        assert len(frame_results) == 2
-        assert summary["reward"] == 0.5
+        assert len(result["persons"][0]["frames"]) == 2
+        assert result["video_score"]["reward"] == 0.5
         output.write_bytes(b"mp4")
 
     model = HumanRewardModel(
@@ -366,7 +376,8 @@ def test_visualization_runs_after_model_release_without_reinference(tmp_path):
 
 def test_prepared_video_retains_only_anomaly_inputs():
     assert [field.name for field in fields(_PreparedVideo)] == [
-        "video", "entries", "width", "height"
+        "video", "entries", "width", "height", "fps", "num_frames",
+        "logical_tracks",
     ]
 
 

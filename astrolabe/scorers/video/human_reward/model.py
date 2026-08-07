@@ -21,6 +21,7 @@ from astrolabe.scorers.video.person_tracking.tracker import YOLOByteTrackPersonT
 from astrolabe.scorers.video.tracklet_stitching.io import tracking_input_from_result
 from astrolabe.scorers.video.tracklet_stitching.schemas import StitchingConfig
 from astrolabe.scorers.video.tracklet_stitching.stitcher import stitch_tracking
+from .person_centric import build_person_centric_result
 from .visualization import write_human_reward_visualization
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -110,6 +111,11 @@ def _invalid_result(reason: str) -> Dict[str, Any]:
     return {
         "valid": False,
         "reason": reason,
+        "video": None,
+        "persons": [],
+        "video_score": {
+            "reward": None, "micro_score": None, "macro_score": None,
+        },
         "reward": None,
         "micro_score": None,
         "macro_score": None,
@@ -132,6 +138,9 @@ class _PreparedVideo:
     entries: Any
     width: int
     height: int
+    fps: float
+    num_frames: int
+    logical_tracks: Any
 
 
 class HumanRewardModel:
@@ -179,7 +188,6 @@ class HumanRewardModel:
         results: List[Optional[Dict[str, Any]]] = [None] * len(videos)
         prepared: List[Optional[_PreparedVideo]] = [None] * len(videos)
         visualization_ready = False
-        visualization_frame_results: Sequence[Dict[str, Any]] = []
         tracker = None
         try:
             tracker = self._tracker_factory(
@@ -216,6 +224,9 @@ class HumanRewardModel:
                         entries=entries,
                         width=tracking.video.width,
                         height=tracking.video.height,
+                        fps=tracking.video.fps,
+                        num_frames=tracking.video.num_frames,
+                        logical_tracks=tuple(getattr(stitching, "logical_tracks", ())),
                     )
                 except Exception as error:
                     if _is_cuda_failure(error):
@@ -242,7 +253,7 @@ class HumanRewardModel:
                     try:
                         frame_results = engine.score_video(item.video, item.entries)
                         validate_worker_results(item.entries, frame_results)
-                        _, summary = aggregate_human_anomaly(
+                        track_scores, summary = aggregate_human_anomaly(
                             item.entries,
                             frame_results,
                             item.width,
@@ -254,9 +265,24 @@ class HumanRewardModel:
                             raise RuntimeError(
                                 "Human Reward aggregation produced no valid score"
                             )
+                        person_centric = build_person_centric_result(
+                            video={
+                                "path": str(item.video),
+                                "width": item.width,
+                                "height": item.height,
+                                "fps": item.fps,
+                                "num_frames": item.num_frames,
+                            },
+                            entries=item.entries,
+                            frame_results=frame_results,
+                            logical_tracks=item.logical_tracks,
+                            track_scores=track_scores,
+                            summary=summary,
+                        )
                         results[index] = {
                             "valid": True,
                             "reason": None,
+                            **person_centric,
                             "reward": float(micro),
                             "micro_score": float(micro),
                             "macro_score": float(macro),
@@ -276,7 +302,6 @@ class HumanRewardModel:
                             "visualization": None,
                         }
                         if visualization_output is not None:
-                            visualization_frame_results = frame_results
                             visualization_ready = True
                     except Exception as error:
                         if _is_cuda_failure(error):
@@ -296,9 +321,7 @@ class HumanRewardModel:
             result = results[0]
             if result is None:
                 raise RuntimeError("Internal error: visualization result is missing")
-            self._visualization_writer(
-                videos[0], visualization_frame_results, result, destination
-            )
+            self._visualization_writer(videos[0], result, destination)
             result["visualization"] = str(destination)
 
         if any(result is None for result in results):

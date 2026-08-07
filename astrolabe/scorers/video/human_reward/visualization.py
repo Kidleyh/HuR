@@ -6,12 +6,13 @@ import math
 import os
 import subprocess
 import tempfile
-from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Mapping, Sequence, Tuple
+from typing import Any, Mapping, Sequence, Tuple
 
 import cv2
 import imageio_ffmpeg
+
+from .person_centric import build_frame_to_person_refs
 
 NORMAL_COLOR = (0, 200, 0)
 ABNORMAL_COLOR = (0, 0, 255)
@@ -41,8 +42,9 @@ def _clipped_box(box: Sequence[float], width: int, height: int) -> Tuple[int, in
 
 
 def _draw_summary(frame: Any, summary: Mapping[str, Any]) -> None:
-    micro = summary.get("micro_score")
-    macro = summary.get("macro_score")
+    video_score = summary.get("video_score", {})
+    micro = video_score.get("micro_score")
+    macro = video_score.get("macro_score")
     lines = [
         f"Micro score: {_probability_text(micro)}",
         f"Macro score: {_probability_text(macro)}",
@@ -63,7 +65,9 @@ def _draw_summary(frame: Any, summary: Mapping[str, Any]) -> None:
         )
 
 
-def _draw_person(frame: Any, item: Mapping[str, Any]) -> None:
+def _draw_person(
+    frame: Any, logical_track_id: int, item: Mapping[str, Any]
+) -> None:
     height, width = frame.shape[:2]
     human = item.get("human", {})
     person_state, person_color = _state(
@@ -75,7 +79,7 @@ def _draw_person(frame: Any, item: Mapping[str, Any]) -> None:
     x1, y1, x2, y2 = _clipped_box(item["bbox_xyxy"], width, height)
     cv2.rectangle(frame, (x1, y1), (x2, y2), person_color, 2)
     label = (
-        f"L{item['logical_track_id']} person={person_state} "
+        f"L{logical_track_id} person={person_state} "
         f"human={_probability_text(human.get('abnormal_probability'))}({human_state})"
     )
     cv2.putText(
@@ -103,17 +107,17 @@ def _draw_person(frame: Any, item: Mapping[str, Any]) -> None:
 
 def write_human_reward_visualization(
     video_path: Path,
-    frame_results: Sequence[Dict[str, Any]],
-    summary: Mapping[str, Any],
+    result: Mapping[str, Any],
     destination: Path,
 ) -> None:
     """Render one browser-compatible MP4 and atomically promote it."""
     source = Path(video_path).expanduser().resolve()
     output = Path(destination).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    grouped = defaultdict(list)
-    for result in frame_results:
-        grouped[int(result["frame_index"])].append(result)
+    persons = {
+        int(person["logical_track_id"]): person for person in result["persons"]
+    }
+    frame_to_person_refs = build_frame_to_person_refs(result["persons"])
 
     with tempfile.TemporaryDirectory(
         dir=output.parent, prefix=f".{output.name}.tmp-"
@@ -147,9 +151,12 @@ def write_human_reward_visualization(
                 ok, frame = capture.read()
                 if not ok:
                     break
-                _draw_summary(frame, summary)
-                for item in grouped.get(frame_index, []):
-                    _draw_person(frame, item)
+                _draw_summary(frame, result)
+                for logical_track_id, person_frame_index in frame_to_person_refs.get(
+                    frame_index, []
+                ):
+                    item = persons[logical_track_id]["frames"][person_frame_index]
+                    _draw_person(frame, logical_track_id, item)
                 writer.write(frame)
                 frame_index += 1
         finally:

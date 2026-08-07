@@ -410,3 +410,16 @@ pytest -q tests/test_human_reward*.py
 pytest -q tests/test_human_anomaly*.py
 git diff --check
 ```
+
+### Person-centric Human Reward result
+
+`HumanRewardModel.score()` and `score_batch()` keep person-frame data once under
+`result["persons"]`, grouped by `logical_track_id`. Each person contains the
+original stitching `track` summary, observed (non-interpolated) `frames`, the
+current binary `score`, and an empty `temporal` extension point. Video-level
+values live in `result["video_score"]`; top-level `reward`, `micro_score`, and
+`macro_score` remain compatibility aliases sourced from that same aggregation.
+
+The optional visualization reads the person-centric structure through a
+lightweight `(logical_track_id, person_frame_index)` frame index. It does not run
+tracking or Human Anomaly again.
