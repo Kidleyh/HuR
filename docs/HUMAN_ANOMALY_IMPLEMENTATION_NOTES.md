@@ -138,6 +138,39 @@ Human Anomaly evaluates single-frame anatomy. It does not evaluate temporal acti
 plausibility, modify logical tracks, run pose/SMPL, add ReID, or treat missing
 face/hand detections as anomalies.
 
+## HuR classifier spatial preprocessing
+
+HuR replaces only the inference transform stored in the external VBench
+`Analyzer` after model initialization. Human, face, and hand all use:
+
+```text
+square smart_cut crop
+-> bicubic Resize((224, 224))
+-> ToTensor
+-> unchanged ImageNet mean/std normalization
+-> unchanged ViT classifier
+```
+
+The former `Resize(256) -> CenterCrop(224)` inference path is not used by HuR,
+so boundary pixels in the already-square crop are retained. VBench source,
+`smart_cut`, RGB handling, checkpoints, thresholds, classification semantics,
+and reward aggregation are unchanged.
+
+H100 comparison on the same 80-frame test video:
+
+```text
+                           Resize(256)+CenterCrop(224)   direct Bicubic 224x224
+Binary micro score                    0.9875                    0.9750
+Binary macro score                    0.9875                    0.9750
+Abnormal person frames                1 / 80                    2 / 80
+Observed / scored                    80 / 80                   80 / 80
+```
+
+The modified composite visualization remained 1280x736, 16 FPS, and 80 frames.
+Visual inspection showed the full person box from head to feet plus face and hand
+boxes in original-frame coordinates. The transform tests separately verify that
+all square-crop boundary pixels reach the direct resize instead of a second crop.
+
 ## Stage 1.3 robustness hardening
 
 Five safeguards were added without changing VBench models, official thresholds,

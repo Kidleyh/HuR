@@ -18,6 +18,9 @@ from .schema import (
     OFFICIAL_THRESHOLDS, HumanAnomalyInput, classifier_result, person_is_abnormal,
 )
 
+CLASSIFIER_CATEGORIES = ("human", "face", "hand")
+CLASSIFIER_IMAGE_SIZE = 224
+
 
 def _is_cuda_failure(error: BaseException) -> bool:
     message = str(error).lower()
@@ -88,6 +91,36 @@ class FaceHandDetector:
         ]
 
 
+def _build_hur_classifier_transform() -> Any:
+    """Resize a square smart_cut crop directly to the ViT input resolution."""
+    from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+    from torchvision import transforms
+    from torchvision.transforms import InterpolationMode
+
+    return transforms.Compose([
+        transforms.Resize(
+            (CLASSIFIER_IMAGE_SIZE, CLASSIFIER_IMAGE_SIZE),
+            interpolation=InterpolationMode.BICUBIC,
+        ),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
+    ])
+
+
+def _override_classifier_transforms(analyzer: Any) -> None:
+    """Replace only HuR inference transforms for all three VBench classifiers."""
+    missing = [
+        category for category in CLASSIFIER_CATEGORIES
+        if category not in analyzer.transforms
+    ]
+    if missing:
+        raise RuntimeError(
+            f"VBench Analyzer is missing classifier transforms: {missing}"
+        )
+    for category in CLASSIFIER_CATEGORIES:
+        analyzer.transforms[category] = _build_hur_classifier_transform()
+
+
 def _load_vbench(
     vbench_root: Path, cache_dir: Path, device: str, batch_size: int
 ) -> Tuple[Any, FaceHandDetector, Dict[str, Dict[str, str]], Path, Path]:
@@ -129,6 +162,7 @@ def _load_vbench(
             model_configs, device=device, batch_size=batch_size,
             class_thresholds=OFFICIAL_THRESHOLDS,
         )
+        _override_classifier_transforms(analyzer)
         detector = FaceHandDetector(detector_config, detector_weight, device)
     return analyzer, detector, model_configs, detector_config, detector_weight
 

@@ -401,7 +401,7 @@ python scripts/run_human_reward.py \
   --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
 ```
 
-两种运行方式都只执行两遍视频读取，不写tracking、stitching、worker日志或可视化等中间文件。`--vbench-clip-model`应指向已部署的本地模型目录，避免运行时联网下载。
+未指定可视化时只执行两遍视频读取；指定可视化时在模型全部释放后第三次读取原视频。流程不写tracking、stitching、worker日志或其他中间文件。`--vbench-clip-model`应指向已部署的本地模型目录，避免运行时联网下载。
 
 测试：
 
