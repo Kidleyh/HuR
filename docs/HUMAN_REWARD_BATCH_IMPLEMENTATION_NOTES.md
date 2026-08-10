@@ -41,3 +41,16 @@ dataset.
 
 The two skipped repository tests are existing integration tests whose optional
 external resources are unavailable; no test failed.
+
+## Pair-preserving visualizations
+
+The optional `--visualization-dir` renders model-free composite overlays after
+the single batch inference call. It does not rerun tracking, stitching, or
+anomaly inference. Files mirror the source layout as
+`<root>/<sample-name>/gt.mp4` and `<root>/<sample-name>/render.mp4`, and their
+absolute paths are recorded in the corresponding complete JSON results.
+
+H100 verification used pair `12_(112)_0`. Both outputs contained 137 frames at
+25 FPS. The GT visualization preserved 1920x1080 resolution, and the render
+visualization preserved 1088x768 resolution. Paired CLI tests passed (`4
+passed`) and `git diff --check` passed.

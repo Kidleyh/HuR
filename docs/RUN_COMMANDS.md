@@ -475,5 +475,20 @@ python scripts/run_human_reward_pairs.py \
   --device cuda:0
 ```
 
+To also generate composite Human Reward visualizations while preserving the
+input pair directory layout:
+
+```bash
+python scripts/run_human_reward_pairs.py \
+  --input-dir /gemini/platform/public/aigc/human_guozz2/code/lyh/job/OmniStream-LTX-dynamic/ltx_experiments/test_outputs/wuda_stage1_pairs_twostage30_auto_frames \
+  --output outputs/wuda_stage1_pairs_human_reward.json \
+  --visualization-dir outputs/wuda_stage1_pairs_human_reward_visualizations \
+  --device cuda:0
+```
+
+This creates `<visualization-dir>/<sample-name>/gt.mp4` and
+`<visualization-dir>/<sample-name>/render.mp4`. The aggregate JSON also records
+the absolute visualization path in each positive/negative result.
+
 Use `--max-pairs 1` for a smoke test. Human Temporal remains off unless the
 explicit local RTMPose flags documented above are also provided.

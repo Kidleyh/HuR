@@ -17,6 +17,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from astrolabe.scorers.video.human_reward import HumanRewardConfig, HumanRewardModel
+from astrolabe.scorers.video.human_reward.visualization import (
+    write_human_reward_visualization,
+)
 
 LOGGER = logging.getLogger("human_reward_pairs")
 SCHEMA_VERSION = "1.0"
@@ -113,11 +116,44 @@ def write_json_atomic(path: Path, data: Any) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def write_pair_visualizations(
+    pairs: Sequence[VideoPair],
+    results: Sequence[Dict[str, Any]],
+    output_dir: Path,
+) -> List[Path]:
+    """Render results under ``<output>/<pair name>/{gt,render}.mp4``."""
+    expected = 2 * len(pairs)
+    if len(results) != expected:
+        raise RuntimeError(
+            f"Human Reward returned {len(results)} results for {expected} videos"
+        )
+    root = Path(output_dir).expanduser().resolve()
+    destinations: List[Path] = []
+    for index, pair in enumerate(pairs):
+        for offset, (stem, video) in enumerate((
+            ("gt", pair.positive),
+            ("render", pair.negative),
+        )):
+            result = results[2 * index + offset]
+            destination = root / pair.name / f"{stem}.mp4"
+            write_human_reward_visualization(video, result, destination)
+            result["visualization"] = str(destination)
+            destinations.append(destination)
+    return destinations
+
+
 def build_parser() -> argparse.ArgumentParser:
     defaults = HumanRewardConfig()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--visualization-dir",
+        help=(
+            "Optional root for <pair-name>/gt.mp4 and "
+            "<pair-name>/render.mp4 visualizations"
+        ),
+    )
     parser.add_argument("--max-pairs", type=int)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--weights", default=str(defaults.yolo_weights))
@@ -187,6 +223,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     ]
     LOGGER.info("Scoring %d pairs (%d videos)", len(pairs), len(video_paths))
     results = HumanRewardModel(_config_from_args(args)).score_batch(video_paths)
+    if args.visualization_dir:
+        visualizations = write_pair_visualizations(
+            pairs, results, Path(args.visualization_dir)
+        )
+        LOGGER.info(
+            "Generated %d visualizations under %s",
+            len(visualizations),
+            Path(args.visualization_dir).expanduser().resolve(),
+        )
     aggregate = build_paired_result(Path(args.input_dir), pairs, results)
     write_json_atomic(Path(args.output), aggregate)
     valid = sum(

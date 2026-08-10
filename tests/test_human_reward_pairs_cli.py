@@ -98,3 +98,66 @@ def test_build_paired_result_rejects_result_count_mismatch(tmp_path):
         run_human_reward_pairs.build_paired_result(
             tmp_path / "pairs", [pair], [{}]
         )
+
+
+def test_pair_cli_writes_visualizations_in_matching_directory_layout(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "pairs"
+    first = _make_pair(root, "a_pair")
+    second = _make_pair(root, "中文_pair")
+    output = tmp_path / "scores.json"
+    visualization_dir = tmp_path / "visualizations"
+    model_calls = []
+    visualization_calls = []
+
+    class Model:
+        def __init__(self, config):
+            pass
+
+        def score_batch(self, video_paths):
+            paths = list(video_paths)
+            model_calls.append(paths)
+            return [_full_result(path) for path in paths]
+
+    def visualize(video, result, destination):
+        visualization_calls.append((video, destination, result["reward"]))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"visualization")
+
+    monkeypatch.setattr(run_human_reward_pairs, "HumanRewardModel", Model)
+    monkeypatch.setattr(
+        run_human_reward_pairs, "write_human_reward_visualization", visualize
+    )
+    assert run_human_reward_pairs.main([
+        "--input-dir", str(root),
+        "--output", str(output),
+        "--visualization-dir", str(visualization_dir),
+        "--device", "cpu",
+    ]) == 0
+
+    expected_videos = [
+        first / "gt.mp4", first / "render.mp4",
+        second / "gt.mp4", second / "render.mp4",
+    ]
+    expected_outputs = [
+        visualization_dir / "a_pair/gt.mp4",
+        visualization_dir / "a_pair/render.mp4",
+        visualization_dir / "中文_pair/gt.mp4",
+        visualization_dir / "中文_pair/render.mp4",
+    ]
+    assert model_calls == [[path.resolve() for path in expected_videos]]
+    assert [call[0] for call in visualization_calls] == [
+        path.resolve() for path in expected_videos
+    ]
+    assert [call[1] for call in visualization_calls] == [
+        path.resolve() for path in expected_outputs
+    ]
+    assert all(path.read_bytes() == b"visualization" for path in expected_outputs)
+    data = json.loads(output.read_text())
+    assert data["pairs"][0]["positive"]["result"]["visualization"] == str(
+        expected_outputs[0].resolve()
+    )
+    assert data["pairs"][1]["negative"]["result"]["visualization"] == str(
+        expected_outputs[3].resolve()
+    )
