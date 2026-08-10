@@ -1,0 +1,43 @@
+# Paired Human Reward Batch Implementation Notes
+
+## Scope
+
+- Added `scripts/run_human_reward_pairs.py` for directories whose immediate
+  child folders contain `gt.mp4` (positive) and `render.mp4` (negative).
+- The script ignores unrelated files such as sample JSON metadata.
+- All videos are passed to one `HumanRewardModel.score_batch()` call so model
+  lifecycle and reuse follow the existing in-memory batch pipeline.
+- A single JSON document is written atomically after all pair results are
+  available. Each side retains the complete Human Reward result, including
+  person-centric frames, Human/Face/Hand details, temporal fields, person
+  statistics, and video scores.
+
+## Output schema
+
+The top level contains `schema_version`, the absolute `input_dir`,
+`pair_count`, `video_count`, and a stable `pairs` array. Each pair records its
+directory `name` and two entries:
+
+- `positive`: `kind=gt`, source video path, and the complete result.
+- `negative`: `kind=render`, source video path, and the complete result.
+
+Pair folders and results are deterministically ordered by folder name. An
+incomplete pair is rejected explicitly instead of silently producing a partial
+dataset.
+
+## Verification (2026-08-10)
+
+- Compile check: passed.
+- Paired CLI tests: `3 passed`.
+- Human Reward tests: `24 passed`.
+- Full repository tests: `144 passed, 2 skipped`.
+- `git diff --check`: passed.
+- H100 smoke test: first pair `12_(112)_0`, two videos processed in one batch.
+  - Positive (`gt.mp4`): valid, reward `0.9976689976689976`, 6 logical tracks,
+    429 observed/scored person frames.
+  - Negative (`render.mp4`): valid, reward `0.9462616822429907`, 6 logical
+    tracks, 428 observed/scored person frames.
+  - Output: `/tmp/wuda_pair_smoke.json` (1,640,421 bytes).
+
+The two skipped repository tests are existing integration tests whose optional
+external resources are unavailable; no test failed.

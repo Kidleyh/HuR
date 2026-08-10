@@ -457,3 +457,23 @@ pytest -q tests/test_human_temporal*.py
 pytest -q tests/test_human_reward*.py
 git diff --check
 ```
+
+## Batch score paired gt/render directories
+
+Each immediate child directory must contain `gt.mp4` (positive) and
+`render.mp4` (negative). Other files such as `sample.json` are ignored. All
+complete person-centric results are written atomically to one JSON file:
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate human-reward
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+
+python scripts/run_human_reward_pairs.py \
+  --input-dir /gemini/platform/public/aigc/human_guozz2/code/lyh/job/OmniStream-LTX-dynamic/ltx_experiments/test_outputs/wuda_stage1_pairs_twostage30_auto_frames \
+  --output outputs/wuda_stage1_pairs_human_reward.json \
+  --device cuda:0
+```
+
+Use `--max-pairs 1` for a smoke test. Human Temporal remains off unless the
+explicit local RTMPose flags documented above are also provided.
