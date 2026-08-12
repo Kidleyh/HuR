@@ -235,7 +235,7 @@ def analyze_person_temporal(
         value, valid_joints = motion_triplet_metric(
             first, middle, last, name_to_index, config
         )
-        target = frame_metrics[int(last["frame_index"])]
+        target = frame_metrics[int(middle["frame_index"])]
         target["joint_acceleration"] = value
         target["valid_joints"] = valid_joints
 

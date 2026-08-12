@@ -492,3 +492,15 @@ the absolute visualization path in each positive/negative result.
 
 Use `--max-pairs 1` for a smoke test. Human Temporal remains off unless the
 explicit local RTMPose flags documented above are also provided.
+
+Summarize GT/render Human Temporal distributions from a completed paired JSON:
+
+```bash
+python scripts/summarize_human_temporal_pairs.py \
+  --input outputs/paired_human_temporal.json \
+  --output outputs/paired_human_temporal_summary.json
+```
+
+The summary averages valid people within each video, then reports dataset-level
+GT/render means and medians, the fraction of pairs where Render exceeds GT, and
+the largest Render-minus-GT pair differences for bone and motion p90 metrics.

@@ -84,7 +84,11 @@ def test_single_arm_length_jump_and_joint_flicker_are_visible(tmp_path):
     assert result["metrics"]["bone_length_jump_max"] > 0.05
     assert result["metrics"]["joint_acceleration_max"] > 0.05
     assert result["worst_structure_frames"][0]["frame_index"] == 2
-    assert {item["frame_index"] for item in result["worst_motion_frames"]} & {2, 3}
+    assert {item["frame_index"] for item in result["worst_motion_frames"]} == {1, 2}
+    metrics = {item["frame_index"]: item for item in result["frame_metrics"]}
+    assert metrics[1]["joint_acceleration"] is not None
+    assert metrics[2]["joint_acceleration"] is not None
+    assert metrics[3]["joint_acceleration"] is None
 
 
 def test_low_confidence_joint_is_excluded_not_marked_abnormal(tmp_path):

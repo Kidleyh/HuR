@@ -54,3 +54,22 @@ H100 verification used pair `12_(112)_0`. Both outputs contained 137 frames at
 25 FPS. The GT visualization preserved 1920x1080 resolution, and the render
 visualization preserved 1088x768 resolution. Paired CLI tests passed (`4
 passed`) and `git diff --check` passed.
+
+## Human Temporal V1 validation update (2026-08-12)
+
+- Motion acceleration frame ownership was corrected from the last frame to the
+  middle frame of each `(first, middle, last)` triplet. This also aligns worst
+  motion frames and visualization labels with the acceleration event.
+- Added `scripts/summarize_human_temporal_pairs.py` to average valid people per
+  video and compare GT/render bone and motion p90 distributions per pair and at
+  dataset level.
+- Human Temporal tests passed (`7 passed`), the summarizer test passed (`1
+  passed`), and `git diff --check` passed.
+- The requested real RTMPose run could not be performed without inventing
+  resources: `/root/miniconda3/envs/human-reward` has no `mmpose` package, and
+  no local RTMPose config/checkpoint was found under the existing HuR, VBench,
+  job, Conda, or cache locations. No model was downloaded or installed.
+- The originally referenced Wuda input contains 6 pair directories, with one
+  known 48-byte corrupt `render.mp4`; the existing completed paired JSON
+  contains 5 pairs and, because Human Temporal was disabled, correctly produces
+  zero valid temporal samples and null distribution statistics.
