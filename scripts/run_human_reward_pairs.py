@@ -23,6 +23,8 @@ from astrolabe.scorers.video.human_reward.visualization import (
 
 LOGGER = logging.getLogger("human_reward_pairs")
 SCHEMA_VERSION = "1.0"
+FULL_RESULT_FILENAME = "human_reward_pairs_full.json"
+SCORES_RESULT_FILENAME = "human_reward_pairs_scores.json"
 
 
 @dataclass(frozen=True)
@@ -101,6 +103,55 @@ def build_paired_result(
     }
 
 
+def build_scores_result(full_result: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a compact score-only view without person-frame payloads."""
+    pairs = []
+    for pair in full_result["pairs"]:
+        compact_pair = {"name": pair["name"]}
+        for side in ("positive", "negative"):
+            source = pair[side]
+            result = source["result"]
+            persons = []
+            for person in result.get("persons", []):
+                temporal = person.get("temporal", {})
+                human_temporal = temporal.get("human")
+                if isinstance(human_temporal, dict):
+                    human_temporal = {
+                        key: value for key, value in human_temporal.items()
+                        if key not in ("frame_metrics", "keypoint_name_to_index")
+                    }
+                persons.append({
+                    "logical_track_id": person.get("logical_track_id"),
+                    "track": person.get("track", {}),
+                    "score": person.get("score", {}),
+                    "human_temporal": human_temporal,
+                })
+            compact_pair[side] = {
+                "kind": source["kind"],
+                "video_path": source["video_path"],
+                "valid": result.get("valid"),
+                "reason": result.get("reason"),
+                "reward": result.get("reward"),
+                "micro_score": result.get("micro_score"),
+                "macro_score": result.get("macro_score"),
+                "logical_track_count": result.get("logical_track_count", 0),
+                "observed_person_frames": result.get("observed_person_frames", 0),
+                "scored_person_frames": result.get("scored_person_frames", 0),
+                "abnormal_person_frames": result.get("abnormal_person_frames", 0),
+                "failed_person_frames": result.get("failed_person_frames", 0),
+                "visualization": result.get("visualization"),
+                "persons": persons,
+            }
+        pairs.append(compact_pair)
+    return {
+        "schema_version": full_result["schema_version"],
+        "input_dir": full_result["input_dir"],
+        "pair_count": full_result["pair_count"],
+        "video_count": full_result["video_count"],
+        "pairs": pairs,
+    }
+
+
 def write_json_atomic(path: Path, data: Any) -> None:
     """Write the sole aggregate artifact only after serialization succeeds."""
     destination = Path(path).expanduser().resolve()
@@ -146,7 +197,14 @@ def build_parser() -> argparse.ArgumentParser:
     defaults = HumanRewardConfig()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--output",
+        required=True,
+        help=(
+            "Output directory containing human_reward_pairs_full.json and "
+            "human_reward_pairs_scores.json"
+        ),
+    )
     parser.add_argument(
         "--visualization-dir",
         help=(
@@ -215,6 +273,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.max_pairs is not None and args.max_pairs <= 0:
         parser.error("--max-pairs must be positive")
+    output_dir = Path(args.output).expanduser().resolve()
+    if output_dir.exists() and not output_dir.is_dir():
+        parser.error(f"--output must be a directory path: {output_dir}")
     pairs = discover_video_pairs(Path(args.input_dir))
     if args.max_pairs is not None:
         pairs = pairs[:args.max_pairs]
@@ -233,17 +294,23 @@ def main(argv: Optional[List[str]] = None) -> int:
             Path(args.visualization_dir).expanduser().resolve(),
         )
     aggregate = build_paired_result(Path(args.input_dir), pairs, results)
-    write_json_atomic(Path(args.output), aggregate)
+    scores = build_scores_result(aggregate)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    full_output = output_dir / FULL_RESULT_FILENAME
+    scores_output = output_dir / SCORES_RESULT_FILENAME
+    write_json_atomic(full_output, aggregate)
+    write_json_atomic(scores_output, scores)
     valid = sum(
         result.get("valid") is True
         for pair in aggregate["pairs"]
         for result in (pair["positive"]["result"], pair["negative"]["result"])
     )
     LOGGER.info(
-        "Completed %d/%d valid videos; output=%s",
+        "Completed %d/%d valid videos; full=%s; scores=%s",
         valid,
         len(video_paths),
-        Path(args.output).expanduser().resolve(),
+        full_output,
+        scores_output,
     )
     return 0
 

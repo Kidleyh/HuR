@@ -471,9 +471,22 @@ cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
 
 python scripts/run_human_reward_pairs.py \
   --input-dir /gemini/platform/public/aigc/human_guozz2/code/lyh/job/OmniStream-LTX-dynamic/ltx_experiments/test_outputs/wuda_stage1_pairs_twostage30_auto_frames \
-  --output outputs/wuda_stage1_pairs_human_reward.json \
+  --output outputs/wuda_stage1_pairs_human_reward \
   --device cuda:0
 ```
+
+`--output` is a directory. It contains:
+
+```text
+human_reward_pairs_full.json
+human_reward_pairs_scores.json
+```
+
+The full file preserves the complete person-centric and person-frame results.
+The score-only file removes person-frame detections, bboxes, keypoints, and
+per-frame temporal metrics while retaining video scores/counts, person scores,
+track summaries, anomaly/coverage statistics, and aggregated Human Temporal
+metrics.
 
 To also generate composite Human Reward visualizations while preserving the
 input pair directory layout:
@@ -481,7 +494,7 @@ input pair directory layout:
 ```bash
 python scripts/run_human_reward_pairs.py \
   --input-dir /gemini/platform/public/aigc/human_guozz2/code/lyh/job/OmniStream-LTX-dynamic/ltx_experiments/test_outputs/wuda_stage1_pairs_twostage30_auto_frames \
-  --output outputs/wuda_stage1_pairs_human_reward.json \
+  --output outputs/wuda_stage1_pairs_human_reward \
   --visualization-dir outputs/wuda_stage1_pairs_human_reward_visualizations \
   --device cuda:0
 ```

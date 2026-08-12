@@ -12,6 +12,12 @@
   person-centric frames, Human/Face/Hand details, temporal fields, person
   statistics, and video scores.
 
+The paired CLI now treats `--output` as a directory and writes two atomic JSON
+artifacts. `human_reward_pairs_full.json` is the original complete result;
+`human_reward_pairs_scores.json` is a compact view containing video and person
+scores/statistics plus aggregated Human Temporal metrics, without duplicating
+large person-frame detection and pose payloads.
+
 ## Output schema
 
 The top level contains `schema_version`, the absolute `input_dir`,
