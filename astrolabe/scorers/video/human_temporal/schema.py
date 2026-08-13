@@ -58,3 +58,52 @@ def failed_human_temporal_result(
         "worst_motion_frames": [],
         "score": None,
     }
+
+
+@dataclass(frozen=True)
+class PartTemporalConfig:
+    """Local resources and validity controls for face landmark temporal analysis."""
+
+    pose_config: Path
+    pose_checkpoint: Path
+    keypoint_threshold: float = 0.3
+    max_frame_gap: int = 2
+    min_valid_keypoints: int = 5
+
+    def __post_init__(self) -> None:
+        for name in ("pose_config", "pose_checkpoint"):
+            path = Path(getattr(self, name)).expanduser().resolve()
+            object.__setattr__(self, name, path)
+            if not path.is_file():
+                raise FileNotFoundError(f"Temporal {name} does not exist: {path}")
+        if not 0.0 <= self.keypoint_threshold <= 1.0:
+            raise ValueError("keypoint_threshold must be in [0, 1]")
+        if self.max_frame_gap < 1 or self.min_valid_keypoints < 3:
+            raise ValueError("invalid temporal gap or keypoint count")
+
+
+@dataclass(frozen=True)
+class HandTemporalConfig(PartTemporalConfig):
+    """Hand pose resources, wrist association and metric validity controls."""
+
+    wrist_threshold: float = 0.3
+    max_wrist_distance: float = 1.5
+    minimum_wrist_margin: float = 0.2
+    min_valid_bones: int = 6
+    min_valid_joints: int = 8
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not 0.0 <= self.wrist_threshold <= 1.0:
+            raise ValueError("wrist_threshold must be in [0, 1]")
+        if self.max_wrist_distance <= 0 or self.minimum_wrist_margin < 0:
+            raise ValueError("invalid wrist association distance or margin")
+        if self.min_valid_bones < 1 or self.min_valid_joints < 1:
+            raise ValueError("minimum valid bone/joint counts must be positive")
+
+
+def failed_part_temporal_result(error: BaseException) -> Dict[str, Any]:
+    return {
+        "valid": False, "error_type": type(error).__name__, "message": str(error),
+        "metrics": {}, "frame_metrics": [], "score": None,
+    }

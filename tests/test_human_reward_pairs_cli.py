@@ -189,6 +189,17 @@ def test_scores_result_keeps_temporal_metrics_without_frames():
             "frame_metrics": [{"frame_index": 1}],
             "keypoint_name_to_index": {"left_wrist": 9},
         })
+        result["persons"][0]["temporal"]["head"] = {
+            "metrics": {"face_shape_jump_p90": 0.1},
+            "frame_metrics": [{"frame_index": 1}], "score": None,
+        }
+        result["persons"][0]["temporal"]["hand"] = {
+            "left": {
+                "metrics": {"bone_length_jump_p90": 0.3},
+                "frame_metrics": [{"frame_index": 1}], "score": None,
+            },
+            "metrics": {"bone_length_jump_p90": 0.3}, "score": None,
+        }
         pair[side] = {
             "kind": kind, "video_path": f"/{kind}.mp4", "result": result,
         }
@@ -205,5 +216,13 @@ def test_scores_result_keeps_temporal_metrics_without_frames():
     }
     assert "frame_metrics" not in person["human_temporal"]
     assert "keypoint_name_to_index" not in person["human_temporal"]
+    assert person["head_temporal"]["metrics"] == {
+        "face_shape_jump_p90": 0.1
+    }
+    assert "frame_metrics" not in person["head_temporal"]
+    assert person["hand_temporal"]["left"]["metrics"] == {
+        "bone_length_jump_p90": 0.3
+    }
+    assert "frame_metrics" not in person["hand_temporal"]["left"]
     assert "frames" not in person
     assert compact["pairs"][0]["positive"]["observed_person_frames"] == 3

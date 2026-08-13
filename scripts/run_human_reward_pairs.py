@@ -105,6 +105,17 @@ def build_paired_result(
 
 def build_scores_result(full_result: Dict[str, Any]) -> Dict[str, Any]:
     """Build a compact score-only view without person-frame payloads."""
+    def compact_temporal(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: compact_temporal(item)
+                for key, item in value.items()
+                if key not in ("frame_metrics", "keypoint_name_to_index")
+            }
+        if isinstance(value, list):
+            return [compact_temporal(item) for item in value]
+        return value
+
     pairs = []
     for pair in full_result["pairs"]:
         compact_pair = {"name": pair["name"]}
@@ -114,17 +125,13 @@ def build_scores_result(full_result: Dict[str, Any]) -> Dict[str, Any]:
             persons = []
             for person in result.get("persons", []):
                 temporal = person.get("temporal", {})
-                human_temporal = temporal.get("human")
-                if isinstance(human_temporal, dict):
-                    human_temporal = {
-                        key: value for key, value in human_temporal.items()
-                        if key not in ("frame_metrics", "keypoint_name_to_index")
-                    }
                 persons.append({
                     "logical_track_id": person.get("logical_track_id"),
                     "track": person.get("track", {}),
                     "score": person.get("score", {}),
-                    "human_temporal": human_temporal,
+                    "human_temporal": compact_temporal(temporal.get("human")),
+                    "head_temporal": compact_temporal(temporal.get("head")),
+                    "hand_temporal": compact_temporal(temporal.get("hand")),
                 })
             compact_pair[side] = {
                 "kind": source["kind"],
@@ -232,6 +239,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--human-temporal-keypoint-threshold", type=float, default=0.3
     )
     parser.add_argument("--human-temporal-max-frame-gap", type=int, default=2)
+    for prefix in ("head", "hand"):
+        parser.add_argument(f"--{prefix}-temporal", action="store_true")
+        parser.add_argument(f"--{prefix}-temporal-pose-config")
+        parser.add_argument(f"--{prefix}-temporal-pose-checkpoint")
+        parser.add_argument(f"--{prefix}-temporal-keypoint-threshold", type=float, default=0.3)
+        parser.add_argument(f"--{prefix}-temporal-max-frame-gap", type=int, default=2)
+    parser.add_argument("--hand-temporal-wrist-threshold", type=float, default=0.3)
+    parser.add_argument("--hand-temporal-max-wrist-distance", type=float, default=1.5)
     return parser
 
 
@@ -262,6 +277,18 @@ def _config_from_args(args: argparse.Namespace) -> HumanRewardConfig:
             args.human_temporal_keypoint_threshold
         ),
         human_temporal_max_frame_gap=args.human_temporal_max_frame_gap,
+        head_temporal=args.head_temporal,
+        head_temporal_pose_config=(Path(args.head_temporal_pose_config) if args.head_temporal_pose_config else None),
+        head_temporal_pose_checkpoint=(Path(args.head_temporal_pose_checkpoint) if args.head_temporal_pose_checkpoint else None),
+        head_temporal_keypoint_threshold=args.head_temporal_keypoint_threshold,
+        head_temporal_max_frame_gap=args.head_temporal_max_frame_gap,
+        hand_temporal=args.hand_temporal,
+        hand_temporal_pose_config=(Path(args.hand_temporal_pose_config) if args.hand_temporal_pose_config else None),
+        hand_temporal_pose_checkpoint=(Path(args.hand_temporal_pose_checkpoint) if args.hand_temporal_pose_checkpoint else None),
+        hand_temporal_keypoint_threshold=args.hand_temporal_keypoint_threshold,
+        hand_temporal_max_frame_gap=args.hand_temporal_max_frame_gap,
+        hand_temporal_wrist_threshold=args.hand_temporal_wrist_threshold,
+        hand_temporal_max_wrist_distance=args.hand_temporal_max_wrist_distance,
     )
 
 

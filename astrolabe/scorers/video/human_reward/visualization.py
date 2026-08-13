@@ -13,6 +13,7 @@ import cv2
 import imageio_ffmpeg
 
 from astrolabe.scorers.video.human_temporal.metrics import BODY_BONES
+from astrolabe.scorers.video.human_temporal.hand_metrics import HAND_BONES
 from .person_centric import build_frame_to_person_refs
 
 NORMAL_COLOR = (0, 200, 0)
@@ -146,6 +147,53 @@ def _draw_person(
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.4, color, 1, cv2.LINE_AA,
             )
+            pose_key = "face_pose" if category == "faces" else "hand_pose"
+            pose = part.get(pose_key, {})
+            points = pose.get("keypoints_xy", [])
+            scores = pose.get("keypoint_scores", [])
+            point_color = (255, 0, 255) if category == "faces" else (0, 165, 255)
+            for index, point in enumerate(points):
+                if index < len(scores) and float(scores[index]) >= 0.3:
+                    cv2.circle(
+                        frame, tuple(int(round(value)) for value in point),
+                        1 if category == "faces" else 2, point_color, -1, cv2.LINE_AA,
+                    )
+            if category == "hands":
+                for start, end in HAND_BONES:
+                    if (
+                        end < len(points) and end < len(scores)
+                        and float(scores[start]) >= 0.3 and float(scores[end]) >= 0.3
+                    ):
+                        cv2.line(
+                            frame,
+                            tuple(int(round(value)) for value in points[start]),
+                            tuple(int(round(value)) for value in points[end]),
+                            point_color, 1, cv2.LINE_AA,
+                        )
+                if part.get("side"):
+                    cv2.putText(
+                        frame, part["side"][0].upper(), (px1, py2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, point_color, 1, cv2.LINE_AA,
+                    )
+    temporal = item.get("_temporal_metrics", {})
+    head_metric = temporal.get("head", {})
+    hand_metric = temporal.get("hand", {})
+    if head_metric:
+        cv2.putText(
+            frame,
+            "Shape=" + _probability_text(head_metric.get("face_shape_jump"))
+            + " Motion=" + _probability_text(head_metric.get("head_motion_acceleration")),
+            (x1, min(height - 8, y2 + 18)), cv2.FONT_HERSHEY_SIMPLEX,
+            0.4, (255, 0, 255), 1, cv2.LINE_AA,
+        )
+    if hand_metric:
+        cv2.putText(
+            frame,
+            "HandStruct=" + _probability_text(hand_metric.get("hand_bone_length_jump"))
+            + " Motion=" + _probability_text(hand_metric.get("hand_joint_acceleration")),
+            (x1, min(height - 8, y2 + 36)), cv2.FONT_HERSHEY_SIMPLEX,
+            0.4, (0, 165, 255), 1, cv2.LINE_AA,
+        )
 
 
 def write_human_reward_visualization(
@@ -162,11 +210,22 @@ def write_human_reward_visualization(
     }
     frame_to_person_refs = build_frame_to_person_refs(result["persons"])
     temporal_metrics = {}
+    head_metrics = {}
+    hand_metrics = {}
     for person in result["persons"]:
         logical_id = int(person["logical_track_id"])
         human_temporal = person.get("temporal", {}).get("human", {})
         for metric in human_temporal.get("frame_metrics", []):
             temporal_metrics[(logical_id, int(metric["frame_index"]))] = metric
+        for metric in person.get("temporal", {}).get("head", {}).get("frame_metrics", []):
+            head_metrics[(logical_id, int(metric["frame_index"]))] = metric
+        for side in ("left", "right"):
+            for metric in person.get("temporal", {}).get("hand", {}).get(side, {}).get("frame_metrics", []):
+                key = (logical_id, int(metric["frame_index"]))
+                current = hand_metrics.setdefault(key, {})
+                for name in ("hand_bone_length_jump", "hand_joint_acceleration"):
+                    if metric.get(name) is not None:
+                        current[name] = max(float(metric[name]), current.get(name, 0.0))
 
     with tempfile.TemporaryDirectory(
         dir=output.parent, prefix=f".{output.name}.tmp-"
@@ -205,13 +264,18 @@ def write_human_reward_visualization(
                     frame_index, []
                 ):
                     item = persons[logical_track_id]["frames"][person_frame_index]
+                    visual_item = dict(item)
+                    visual_item["_temporal_metrics"] = {
+                        "head": head_metrics.get((logical_track_id, frame_index), {}),
+                        "hand": hand_metrics.get((logical_track_id, frame_index), {}),
+                    }
                     temporal_human = persons[logical_track_id].get(
                         "temporal", {}
                     ).get("human", {})
                     _draw_person(
                         frame,
                         logical_track_id,
-                        item,
+                        visual_item,
                         temporal_human,
                         temporal_metrics.get((logical_track_id, frame_index), {}),
                     )

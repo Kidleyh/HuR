@@ -18,8 +18,15 @@ from astrolabe.scorers.video.human_anomaly.engine import (
 from astrolabe.scorers.video.human_anomaly.manifest import build_human_anomaly_entries
 from astrolabe.scorers.video.human_anomaly.validation import validate_worker_results
 from astrolabe.scorers.video.human_temporal.engine import HumanTemporalEngine
+from astrolabe.scorers.video.human_temporal.part_engines import (
+    HandTemporalEngine,
+    HeadTemporalEngine,
+)
 from astrolabe.scorers.video.human_temporal.schema import (
+    HandTemporalConfig,
     HumanTemporalConfig,
+    PartTemporalConfig,
+    failed_part_temporal_result,
     failed_human_temporal_result,
 )
 from astrolabe.scorers.video.person_tracking.tracker import YOLOByteTrackPersonTracker
@@ -62,6 +69,18 @@ class HumanRewardConfig:
     human_temporal_pose_checkpoint: Optional[Path] = None
     human_temporal_keypoint_threshold: float = 0.3
     human_temporal_max_frame_gap: int = 2
+    head_temporal: bool = False
+    head_temporal_pose_config: Optional[Path] = None
+    head_temporal_pose_checkpoint: Optional[Path] = None
+    head_temporal_keypoint_threshold: float = 0.3
+    head_temporal_max_frame_gap: int = 2
+    hand_temporal: bool = False
+    hand_temporal_pose_config: Optional[Path] = None
+    hand_temporal_pose_checkpoint: Optional[Path] = None
+    hand_temporal_keypoint_threshold: float = 0.3
+    hand_temporal_max_frame_gap: int = 2
+    hand_temporal_wrist_threshold: float = 0.3
+    hand_temporal_max_wrist_distance: float = 1.5
 
     def __post_init__(self) -> None:
         for name in ("yolo_weights", "tracker_config", "stitching_config", "vbench_root"):
@@ -75,7 +94,9 @@ class HumanRewardConfig:
             self, "vbench_clip_model", Path(clip_model).expanduser().resolve()
         )
         for name in (
-            "human_temporal_pose_config", "human_temporal_pose_checkpoint"
+            "human_temporal_pose_config", "human_temporal_pose_checkpoint",
+            "head_temporal_pose_config", "head_temporal_pose_checkpoint",
+            "hand_temporal_pose_config", "hand_temporal_pose_checkpoint",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -84,6 +105,8 @@ class HumanRewardConfig:
             raise ValueError("crop_batch_size must be positive")
         if type(self.human_temporal) is not bool:
             raise ValueError("human_temporal must be a bool")
+        if type(self.head_temporal) is not bool or type(self.hand_temporal) is not bool:
+            raise ValueError("head_temporal and hand_temporal must be bools")
         if self.human_temporal:
             if self.human_temporal_pose_config is None:
                 raise ValueError(
@@ -104,6 +127,26 @@ class HumanRewardConfig:
             raise ValueError("human_temporal_keypoint_threshold must be in [0, 1]")
         if self.human_temporal_max_frame_gap < 1:
             raise ValueError("human_temporal_max_frame_gap must be positive")
+        if self.hand_temporal and not self.human_temporal:
+            raise ValueError(
+                "hand_temporal requires human_temporal so left/right hands can "
+                "be associated to reliable RTMPose wrist keypoints"
+            )
+        for prefix in ("head", "hand"):
+            if not getattr(self, f"{prefix}_temporal"):
+                continue
+            for suffix in ("pose_config", "pose_checkpoint"):
+                name = f"{prefix}_temporal_{suffix}"
+                path = getattr(self, name)
+                if path is None:
+                    raise ValueError(f"{name} is required when {prefix} Temporal is enabled")
+                if not path.is_file():
+                    raise FileNotFoundError(f"{name} does not exist: {path}")
+            threshold = getattr(self, f"{prefix}_temporal_keypoint_threshold")
+            if not 0.0 <= threshold <= 1.0:
+                raise ValueError(f"{prefix}_temporal_keypoint_threshold must be in [0, 1]")
+            if getattr(self, f"{prefix}_temporal_max_frame_gap") < 1:
+                raise ValueError(f"{prefix}_temporal_max_frame_gap must be positive")
 
     @classmethod
     def from_value(
@@ -191,6 +234,8 @@ class HumanRewardModel:
         tracker_factory: Optional[Callable[..., Any]] = None,
         anomaly_engine_factory: Optional[Callable[..., Any]] = None,
         temporal_engine_factory: Optional[Callable[..., Any]] = None,
+        head_temporal_engine_factory: Optional[Callable[..., Any]] = None,
+        hand_temporal_engine_factory: Optional[Callable[..., Any]] = None,
         stitcher: Optional[Callable[..., Any]] = None,
         release_callback: Optional[Callable[[], None]] = None,
         visualization_writer: Optional[Callable[..., None]] = None,
@@ -199,6 +244,8 @@ class HumanRewardModel:
         self._tracker_factory = tracker_factory or YOLOByteTrackPersonTracker
         self._anomaly_engine_factory = anomaly_engine_factory or HumanAnomalyEngine
         self._temporal_engine_factory = temporal_engine_factory or HumanTemporalEngine
+        self._head_temporal_engine_factory = head_temporal_engine_factory or HeadTemporalEngine
+        self._hand_temporal_engine_factory = hand_temporal_engine_factory or HandTemporalEngine
         self._stitcher = stitcher or stitch_tracking
         self._release_callback = release_callback or _release_cuda_models
         self._visualization_writer = (
@@ -392,6 +439,57 @@ class HumanRewardModel:
                 if callable(close):
                     close()
                 temporal_engine = None
+                self._release_callback()
+
+        for enabled, factory, result_key, config in (
+            (
+                self.config.head_temporal,
+                self._head_temporal_engine_factory,
+                "head",
+                PartTemporalConfig(
+                    self.config.head_temporal_pose_config,
+                    self.config.head_temporal_pose_checkpoint,
+                    self.config.head_temporal_keypoint_threshold,
+                    self.config.head_temporal_max_frame_gap,
+                ) if self.config.head_temporal else None,
+            ),
+            (
+                self.config.hand_temporal,
+                self._hand_temporal_engine_factory,
+                "hand",
+                HandTemporalConfig(
+                    self.config.hand_temporal_pose_config,
+                    self.config.hand_temporal_pose_checkpoint,
+                    self.config.hand_temporal_keypoint_threshold,
+                    self.config.hand_temporal_max_frame_gap,
+                    wrist_threshold=self.config.hand_temporal_wrist_threshold,
+                    max_wrist_distance=self.config.hand_temporal_max_wrist_distance,
+                ) if self.config.hand_temporal else None,
+            ),
+        ):
+            if not enabled:
+                continue
+            part_engine = None
+            try:
+                part_engine = factory(config=config, device=self.config.device)
+                for index, item in enumerate(prepared):
+                    result = results[index]
+                    if item is None or result is None or result.get("valid") is not True:
+                        continue
+                    try:
+                        part_engine.score_video(item.video, result["persons"])
+                    except Exception as error:
+                        if _is_cuda_failure(error):
+                            raise
+                        for person in result["persons"]:
+                            person.setdefault("temporal", {})[result_key] = (
+                                failed_part_temporal_result(error)
+                            )
+            finally:
+                close = getattr(part_engine, "close", None)
+                if callable(close):
+                    close()
+                part_engine = None
                 self._release_callback()
 
         if visualization_output is not None and visualization_ready:

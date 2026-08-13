@@ -42,6 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--human-temporal-keypoint-threshold", type=float, default=0.3
     )
     parser.add_argument("--human-temporal-max-frame-gap", type=int, default=2)
+    for prefix in ("head", "hand"):
+        parser.add_argument(f"--{prefix}-temporal", action="store_true")
+        parser.add_argument(f"--{prefix}-temporal-pose-config")
+        parser.add_argument(f"--{prefix}-temporal-pose-checkpoint")
+        parser.add_argument(f"--{prefix}-temporal-keypoint-threshold", type=float, default=0.3)
+        parser.add_argument(f"--{prefix}-temporal-max-frame-gap", type=int, default=2)
+    parser.add_argument("--hand-temporal-wrist-threshold", type=float, default=0.3)
+    parser.add_argument("--hand-temporal-max-wrist-distance", type=float, default=1.5)
     return parser
 
 
@@ -88,6 +96,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.human_temporal_keypoint_threshold
         ),
         human_temporal_max_frame_gap=args.human_temporal_max_frame_gap,
+        head_temporal=args.head_temporal,
+        head_temporal_pose_config=(Path(args.head_temporal_pose_config) if args.head_temporal_pose_config else None),
+        head_temporal_pose_checkpoint=(Path(args.head_temporal_pose_checkpoint) if args.head_temporal_pose_checkpoint else None),
+        head_temporal_keypoint_threshold=args.head_temporal_keypoint_threshold,
+        head_temporal_max_frame_gap=args.head_temporal_max_frame_gap,
+        hand_temporal=args.hand_temporal,
+        hand_temporal_pose_config=(Path(args.hand_temporal_pose_config) if args.hand_temporal_pose_config else None),
+        hand_temporal_pose_checkpoint=(Path(args.hand_temporal_pose_checkpoint) if args.hand_temporal_pose_checkpoint else None),
+        hand_temporal_keypoint_threshold=args.hand_temporal_keypoint_threshold,
+        hand_temporal_max_frame_gap=args.hand_temporal_max_frame_gap,
+        hand_temporal_wrist_threshold=args.hand_temporal_wrist_threshold,
+        hand_temporal_max_wrist_distance=args.hand_temporal_max_wrist_distance,
     )
     model = HumanRewardModel(config)
     result = (

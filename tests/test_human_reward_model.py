@@ -543,3 +543,98 @@ def test_temporal_batch_reuses_engine_and_preserves_binary_rewards(tmp_path):
         result["persons"][0]["temporal"]["human"]["score"] is None
         for result in results
     )
+
+
+def test_head_and_hand_temporal_models_load_once_per_batch(tmp_path):
+    videos = [tmp_path / "first.mp4", tmp_path / "second.mp4"]
+    for video in videos:
+        video.write_bytes(b"video")
+    pose_config, checkpoint = tmp_path / "pose.py", tmp_path / "pose.pth"
+    pose_config.write_text("config")
+    checkpoint.write_bytes(b"checkpoint")
+    events = []
+
+    class Tracker:
+        def __init__(self, **kwargs):
+            pass
+
+        def track_video_in_memory(self, source):
+            return tracking_result(Path(source))
+
+    class Engine:
+        def __init__(self, **kwargs):
+            pass
+
+        def score_video(self, source, entries):
+            return [{
+                "frame_index": item.frame_index,
+                "logical_track_id": item.logical_track_id,
+                "human": {"scored": True, "abnormal": False},
+                "faces": [], "hands": [], "person_abnormal": False,
+            } for item in entries]
+
+        def close(self):
+            pass
+
+    def temporal_engine(name):
+        class TemporalEngine:
+            def __init__(self, **kwargs):
+                events.append(f"{name}_init")
+
+            def score_video(self, source, persons):
+                events.append(f"{name}:{Path(source).stem}")
+                for person in persons:
+                    person["temporal"][name] = {"valid": True, "score": None}
+
+            def close(self):
+                events.append(f"{name}_close")
+
+        return TemporalEngine
+
+    enabled = replace(
+        config(tmp_path),
+        human_temporal=True,
+        human_temporal_pose_config=pose_config,
+        human_temporal_pose_checkpoint=checkpoint,
+        head_temporal=True,
+        head_temporal_pose_config=pose_config,
+        head_temporal_pose_checkpoint=checkpoint,
+        hand_temporal=True,
+        hand_temporal_pose_config=pose_config,
+        hand_temporal_pose_checkpoint=checkpoint,
+    )
+    results = HumanRewardModel(
+        enabled,
+        tracker_factory=Tracker,
+        anomaly_engine_factory=Engine,
+        temporal_engine_factory=temporal_engine("human"),
+        head_temporal_engine_factory=temporal_engine("head"),
+        hand_temporal_engine_factory=temporal_engine("hand"),
+        stitcher=lambda data, cfg: SimpleNamespace(
+            track_id_to_logical_track_id={1: 0}
+        ),
+        release_callback=lambda: None,
+    ).score_batch(videos)
+
+    for name in ("head", "hand"):
+        assert events.count(f"{name}_init") == 1
+        assert events.count(f"{name}_close") == 1
+        assert events.count(f"{name}:first") == 1
+        assert events.count(f"{name}:second") == 1
+    assert [result["reward"] for result in results] == [1.0, 1.0]
+    assert all(
+        result["persons"][0]["temporal"][name]["score"] is None
+        for result in results for name in ("human", "head", "hand")
+    )
+
+
+def test_hand_temporal_requires_human_wrist_pose(tmp_path):
+    pose_config, checkpoint = tmp_path / "pose.py", tmp_path / "pose.pth"
+    pose_config.write_text("config")
+    checkpoint.write_bytes(b"checkpoint")
+    with pytest.raises(ValueError, match="hand_temporal requires human_temporal"):
+        replace(
+            config(tmp_path), hand_temporal=True,
+            hand_temporal_pose_config=pose_config,
+            hand_temporal_pose_checkpoint=checkpoint,
+        )

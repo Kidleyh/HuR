@@ -450,6 +450,37 @@ python scripts/run_human_reward.py \
 The result is attached at `person["temporal"]["human"]`; its `score` is currently
 `null` and therefore does not change binary person scores or video reward.
 
+### Head/Face and Hand Temporal
+
+Head Temporal reuses the face boxes already emitted by Human Anomaly. Hand
+Temporal reuses its hand boxes and associates them only when confident Human
+RTMPose left/right wrists make the assignment reliable. For that reason the
+hand option must be used together with `--human-temporal`. All three RTMPose
+models are loaded sequentially, use local files only, and are released before
+visualization:
+
+```bash
+python scripts/run_human_reward.py \
+  --video /absolute/path/to/input.mp4 \
+  --output outputs/reward_all_temporal.json \
+  --visualization-output outputs/reward_all_temporal.mp4 \
+  --device cuda:0 \
+  --human-temporal \
+  --human-temporal-pose-config /absolute/path/to/body_config.py \
+  --human-temporal-pose-checkpoint /absolute/path/to/body_checkpoint.pth \
+  --head-temporal \
+  --head-temporal-pose-config /absolute/path/to/face_config.py \
+  --head-temporal-pose-checkpoint /absolute/path/to/face_checkpoint.pth \
+  --hand-temporal \
+  --hand-temporal-pose-config /absolute/path/to/hand_config.py \
+  --hand-temporal-pose-checkpoint /absolute/path/to/hand_checkpoint.pth
+```
+
+The added results are `person["temporal"]["head"]` and
+`person["temporal"]["hand"]`. Their raw metrics and worst-frame lists are for
+analysis only; `score` remains `null`, and they do not affect current reward.
+Missing paths are errors and never trigger a network download.
+
 Tests that do not require MMPose or a GPU:
 
 ```bash

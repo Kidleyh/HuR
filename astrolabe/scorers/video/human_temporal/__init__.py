@@ -1,4 +1,8 @@
-"""RTMPose-based human temporal consistency analysis."""
+"""RTMPose-based human, head and hand temporal consistency analysis."""
+
+from .part_engines import HandTemporalEngine, HeadTemporalEngine
+
+__all__ = ["HandTemporalEngine", "HeadTemporalEngine"]
 
 from .engine import HumanTemporalEngine
 from .metrics import BODY_BONES, analyze_person_temporal

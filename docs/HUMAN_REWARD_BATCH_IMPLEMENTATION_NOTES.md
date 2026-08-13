@@ -79,3 +79,29 @@ passed`) and `git diff --check` passed.
   known 48-byte corrupt `render.mp4`; the existing completed paired JSON
   contains 5 pairs and, because Human Temporal was disabled, correctly produces
   zero valid temporal samples and null distribution statistics.
+
+## Head/Face and Hand Temporal V1 (2026-08-13)
+
+- Added frame-batched, top-down RTMPose adapters for existing VBench face and
+  hand boxes. They never run another face, hand, or person detector and require
+  explicit local config/checkpoint paths.
+- Head shape uses similarity alignment (translation, global scale, and 2D
+  rotation removal) before a P90 landmark residual. Head motion uses second
+  differences of center, scale, and PCA orientation and assigns each value to
+  the middle frame.
+- Hand boxes are associated one-to-one with confident Human RTMPose left/right
+  wrists. Distance and ambiguity gates leave unreliable candidates unassigned
+  rather than guessing a side. Consequently Hand Temporal requires Human
+  Temporal to be enabled.
+- Each side uses the 21-keypoint finger skeleton with median global-scale
+  compensation for structure and wrist-centered normalized joint acceleration
+  for motion. Triplet motion values belong to the middle frame.
+- Results are additive under `person["temporal"]["head"]` and
+  `person["temporal"]["hand"]`; every temporal `score` remains `null`, and no
+  reward or anomaly threshold changed.
+- The composite visualization can draw face landmarks, L/R hand skeletons,
+  and per-frame raw temporal metrics after all inference models are released.
+- The deployed HuR weights directory currently contains only the body RTMPose
+  model. Face/Hand code and mock tests are complete, but real Face/Hand inference
+  requires users to provide matching local RTMPose Face and Hand resources; no
+  download is attempted.
