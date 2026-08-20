@@ -733,3 +733,69 @@ python scripts/summarize_human_temporal_pairs.py \
   --input outputs/human_temporal_3d_pairs/human_reward_pairs_full.json \
   --output outputs/human_temporal_3d_pairs/temporal_summary.json
 ```
+
+## 小且清晰人脸筛选
+
+该入口只加载 VBench 已有的 YOLO-World FaceHandDetector，直接对整图/视频帧
+以及原分辨率 tiles 检测 face，不加载人物检测、跟踪、ViT、RTMPose 或 Temporal：
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate human-reward
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+
+NO_ALBUMENTATIONS_UPDATE=1 \
+python scripts/filter_small_clear_faces.py \
+  --input /absolute/path/to/images_or_videos \
+  --output outputs/small_clear_faces.json \
+  --recursive \
+  --frame-stride 5 \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32 \
+  --tile-size 1024 \
+  --tile-overlap 0.15 \
+  --whole-image-detection \
+  --area-threshold 0.01 \
+  --min-face-short-side 32 \
+  --laplacian-threshold 100 \
+  --tenengrad-threshold 1000 \
+  --min-qualified-frames 1 \
+  --visualization-dir outputs/small_clear_faces_visualizations \
+  --copy-selected-to outputs/small_clear_faces_selected
+```
+
+阈值是尚未校准的 V1 起点。输出会保留每个检测脸的面积占比、像素尺寸、
+Laplacian variance 和 Tenengrad，后续应根据真实数据分布重新选择阈值。
+脚本强制 YOLO-World 的 CLIP text model 使用本地目录，并启用 Hugging Face
+offline 模式，不会在运行时下载模型。
+指定 `--visualization-dir` 后，图片会输出带框标注图，视频会以原分辨率和
+原 FPS 输出 H.264/yuv420p MP4。绿色表示满足筛选条件，黄色表示检测到但未满足；
+标签包含 detector score、面积占比、短边、Laplacian variance 与 Tenengrad。
+输出保留输入相对目录结构，且完全复用检测阶段结果，不会再次运行模型。
+
+### Guangdian V2 数据首帧筛选
+
+只根据 `caption_v2/*.json` 匹配同 stem 的 `video/data/*.mp4` 和
+`label/*.json`，每个视频仅解码、检测首帧。满足默认小且清晰人脸条件的样本
+按训练清单格式写入 `--output-path`；缺目录、缺配对文件、不满足条件和处理失败
+写入独立的 `*_skipped.json`：
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate human-reward
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+
+NO_ALBUMENTATIONS_UPDATE=1 \
+python scripts/filter_guangdian_small_clear_faces.py \
+  --input-root /gemini-1/platform/public/human_guozz/hz_data01_new/guangdian_20251114 \
+  --output-path outputs/guangdian_20251114_small_clear_faces.json \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32 \
+  --tile-size 1024 \
+  --tile-overlap 0.15 \
+  --whole-image-detection
+```
+
+处理过程每完成一个视频都会原子刷新两个 JSON。中断后用完全相同的命令追加
+`--resume` 即可跳过已经处理过的 caption。用 `--skipped-output-path` 可显式指定
+跳过记录路径，用 `--max-videos 1` 可先做单视频 smoke test。
