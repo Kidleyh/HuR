@@ -130,7 +130,8 @@ def analyze_head_temporal(
         xy, scores = pose_arrays(item, "face_pose")
         coverages.append(sum(score >= config.keypoint_threshold for score in scores) / len(xy) if len(xy) else 0.0)
     return {
-        "valid": bool(shape or motion), "pose_frames": sum(value > 0 for value in coverages),
+        "valid": bool(shape or motion),
+        "pose_frames": int(sum(bool(value > 0) for value in coverages)),
         "total_observed_frames": len(records),
         "mean_keypoint_coverage": float(mean(coverages)) if coverages else 0.0,
         "valid_shape_pairs": len(shape), "valid_motion_triplets": len(motion),

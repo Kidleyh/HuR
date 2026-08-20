@@ -17,6 +17,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from astrolabe.scorers.video.human_reward import HumanRewardConfig, HumanRewardModel
+from astrolabe.scorers.video.human_reward.pair_evaluation import (
+    build_pair_frame_evaluation,
+    build_pair_score_summary,
+)
 from astrolabe.scorers.video.human_reward.visualization import (
     write_human_reward_visualization,
 )
@@ -25,6 +29,8 @@ LOGGER = logging.getLogger("human_reward_pairs")
 SCHEMA_VERSION = "1.0"
 FULL_RESULT_FILENAME = "human_reward_pairs_full.json"
 SCORES_RESULT_FILENAME = "human_reward_pairs_scores.json"
+FRAME_EVALUATION_FILENAME = "human_reward_pair_frame_evaluation.json"
+PAIR_EVALUATION_FILENAME = "human_reward_pair_evaluation.json"
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,52 @@ def discover_video_pairs(input_dir: Path) -> List[VideoPair]:
     if incomplete:
         raise ValueError("Incomplete video pair folders: " + "; ".join(incomplete))
     return pairs
+
+
+def load_selected_video_pairs(manifest_path: Path) -> tuple[Path, List[VideoPair]]:
+    """Load exactly the ordered pairs recorded by a selection manifest."""
+    path = Path(manifest_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Selection manifest does not exist: {path}")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read selection manifest {path}: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("Selection manifest root must be a JSON object")
+    data_root_value = manifest.get("data_root")
+    selected = manifest.get("selected_pairs")
+    if not isinstance(data_root_value, str) or not data_root_value.strip():
+        raise ValueError("Selection manifest data_root must be a non-empty string")
+    if not isinstance(selected, list) or not selected:
+        raise ValueError("Selection manifest selected_pairs must be a non-empty list")
+    data_root = Path(data_root_value).expanduser().resolve()
+    if not data_root.is_dir():
+        raise NotADirectoryError(f"Selection manifest data_root is missing: {data_root}")
+
+    pairs = []
+    seen = set()
+    for index, item in enumerate(selected):
+        if not isinstance(item, dict):
+            raise ValueError(f"selected_pairs[{index}] must be an object")
+        folder = item.get("folder")
+        if not isinstance(folder, str) or not folder or Path(folder).name != folder:
+            raise ValueError(
+                f"selected_pairs[{index}].folder must be one directory name"
+            )
+        if folder in seen:
+            raise ValueError(f"Duplicate selected pair folder: {folder}")
+        seen.add(folder)
+        directory = data_root / folder
+        gt = directory / "gt.mp4"
+        render = directory / "render.mp4"
+        missing = [str(video) for video in (gt, render) if not video.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                f"Selected pair {folder} is missing video(s): {', '.join(missing)}"
+            )
+        pairs.append(VideoPair(folder, gt.resolve(), render.resolve()))
+    return data_root, pairs
 
 
 def build_paired_result(
@@ -132,6 +184,9 @@ def build_scores_result(full_result: Dict[str, Any]) -> Dict[str, Any]:
                     "human_temporal": compact_temporal(temporal.get("human")),
                     "head_temporal": compact_temporal(temporal.get("head")),
                     "hand_temporal": compact_temporal(temporal.get("hand")),
+                    "human_temporal_3d": compact_temporal(
+                        temporal.get("human_3d")
+                    ),
                 })
             compact_pair[side] = {
                 "kind": source["kind"],
@@ -203,7 +258,14 @@ def write_pair_visualizations(
 def build_parser() -> argparse.ArgumentParser:
     defaults = HumanRewardConfig()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-dir", required=True)
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument(
+        "--input-dir", help="Directory whose immediate children are pair folders"
+    )
+    input_group.add_argument(
+        "--selection-manifest",
+        help="JSON manifest containing data_root and ordered selected_pairs",
+    )
     parser.add_argument(
         "--output",
         required=True,
@@ -220,6 +282,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--max-pairs", type=int)
+    parser.add_argument(
+        "--tie-epsilon", type=float, default=1e-12,
+        help="Absolute GT/render quality difference treated as a tie",
+    )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--weights", default=str(defaults.yolo_weights))
     parser.add_argument("--tracker-config", default=str(defaults.tracker_config))
@@ -247,6 +313,10 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--{prefix}-temporal-max-frame-gap", type=int, default=2)
     parser.add_argument("--hand-temporal-wrist-threshold", type=float, default=0.3)
     parser.add_argument("--hand-temporal-max-wrist-distance", type=float, default=1.5)
+    parser.add_argument("--human-temporal-3d", action="store_true")
+    parser.add_argument("--gvhmr-root")
+    parser.add_argument("--gvhmr-checkpoint")
+    parser.add_argument("--human-temporal-3d-min-valid-joints", type=int, default=1)
     return parser
 
 
@@ -289,6 +359,14 @@ def _config_from_args(args: argparse.Namespace) -> HumanRewardConfig:
         hand_temporal_max_frame_gap=args.hand_temporal_max_frame_gap,
         hand_temporal_wrist_threshold=args.hand_temporal_wrist_threshold,
         hand_temporal_max_wrist_distance=args.hand_temporal_max_wrist_distance,
+        human_temporal_3d=args.human_temporal_3d,
+        gvhmr_root=Path(args.gvhmr_root) if args.gvhmr_root else None,
+        gvhmr_checkpoint=(
+            Path(args.gvhmr_checkpoint) if args.gvhmr_checkpoint else None
+        ),
+        human_temporal_3d_min_valid_joints=(
+            args.human_temporal_3d_min_valid_joints
+        ),
     )
 
 
@@ -300,10 +378,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.max_pairs is not None and args.max_pairs <= 0:
         parser.error("--max-pairs must be positive")
+    if args.tie_epsilon < 0:
+        parser.error("--tie-epsilon must be non-negative")
     output_dir = Path(args.output).expanduser().resolve()
     if output_dir.exists() and not output_dir.is_dir():
         parser.error(f"--output must be a directory path: {output_dir}")
-    pairs = discover_video_pairs(Path(args.input_dir))
+    if args.selection_manifest:
+        input_root, pairs = load_selected_video_pairs(
+            Path(args.selection_manifest)
+        )
+    else:
+        input_root = Path(args.input_dir).expanduser().resolve()
+        pairs = discover_video_pairs(input_root)
     if args.max_pairs is not None:
         pairs = pairs[:args.max_pairs]
     video_paths = [
@@ -320,24 +406,41 @@ def main(argv: Optional[List[str]] = None) -> int:
             len(visualizations),
             Path(args.visualization_dir).expanduser().resolve(),
         )
-    aggregate = build_paired_result(Path(args.input_dir), pairs, results)
+    aggregate = build_paired_result(input_root, pairs, results)
+    if args.selection_manifest:
+        aggregate["selection_manifest"] = str(
+            Path(args.selection_manifest).expanduser().resolve()
+        )
     scores = build_scores_result(aggregate)
+    frame_evaluation = build_pair_frame_evaluation(
+        aggregate, tie_epsilon=args.tie_epsilon
+    )
+    frame_evaluation["selection_manifest"] = (
+        str(Path(args.selection_manifest).expanduser().resolve())
+        if args.selection_manifest else None
+    )
+    pair_evaluation = build_pair_score_summary(frame_evaluation)
     output_dir.mkdir(parents=True, exist_ok=True)
     full_output = output_dir / FULL_RESULT_FILENAME
     scores_output = output_dir / SCORES_RESULT_FILENAME
+    frame_evaluation_output = output_dir / FRAME_EVALUATION_FILENAME
+    pair_evaluation_output = output_dir / PAIR_EVALUATION_FILENAME
     write_json_atomic(full_output, aggregate)
     write_json_atomic(scores_output, scores)
+    write_json_atomic(frame_evaluation_output, frame_evaluation)
+    write_json_atomic(pair_evaluation_output, pair_evaluation)
     valid = sum(
         result.get("valid") is True
         for pair in aggregate["pairs"]
         for result in (pair["positive"]["result"], pair["negative"]["result"])
     )
     LOGGER.info(
-        "Completed %d/%d valid videos; full=%s; scores=%s",
+        "Completed %d/%d valid videos; full=%s; scores=%s; evaluation=%s",
         valid,
         len(video_paths),
         full_output,
         scores_output,
+        pair_evaluation_output,
     )
     return 0
 

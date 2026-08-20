@@ -481,6 +481,33 @@ The added results are `person["temporal"]["head"]` and
 analysis only; `score` remains `null`, and they do not affect current reward.
 Missing paths are errors and never trigger a network download.
 
+Real paired Body/Head/Hand Temporal validation with the deployed local models:
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 NO_ALBUMENTATIONS_UPDATE=1 \
+python scripts/run_human_reward_pairs.py \
+  --input-dir /gemini/platform/public/aigc/human_guozz2/code/lyh/job/OmniStream-LTX-dynamic/ltx_experiments/test_outputs/wuda_stage1_pairs_twostage30_auto_frames \
+  --output outputs/head_hand_temporal_pairs \
+  --visualization-dir outputs/head_hand_temporal_pairs/visualizations \
+  --device cuda:0 \
+  --human-temporal \
+  --human-temporal-pose-config weights/rtmpose/rtmpose-m_8xb256-420e_body8-256x192.py \
+  --human-temporal-pose-checkpoint weights/rtmpose/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.pth \
+  --head-temporal \
+  --head-temporal-pose-config weights/rtmpose_face/rtmpose-m_8xb256-120e_face6-256x256.py \
+  --head-temporal-pose-checkpoint weights/rtmpose_face/rtmpose-m_simcc-face6_pt-in1k_120e-256x256-72a37400_20230529.pth \
+  --hand-temporal \
+  --hand-temporal-pose-config weights/rtmpose_hand/rtmpose-m_8xb256-210e_hand5-256x256.py \
+  --hand-temporal-pose-checkpoint weights/rtmpose_hand/rtmpose-m_simcc-hand5_pt-aic-coco_210e-256x256-74fb594_20230320.pth
+
+python scripts/summarize_human_temporal_pairs.py \
+  --input outputs/head_hand_temporal_pairs/human_reward_pairs_full.json \
+  --output outputs/head_hand_temporal_pairs/temporal_summary.json
+```
+
+Add `--max-pairs 1` to the first command for the one-pair smoke test. The
+offline environment variables make accidental model downloads fail explicitly.
+
 Tests that do not require MMPose or a GPU:
 
 ```bash
@@ -548,3 +575,161 @@ python scripts/summarize_human_temporal_pairs.py \
 The summary averages valid people within each video, then reports dataset-level
 GT/render means and medians, the fraction of pairs where Render exceeds GT, and
 the largest Render-minus-GT pair differences for bone and motion p90 metrics.
+
+## Selection manifest：逐帧 Human Anomaly GT/render 判别评测
+
+以下命令严格使用 `selection_manifest.json` 中有序的 `selected_pairs`，不会扫描
+`data_root` 中未被选中的其他视频。Human、Head、Hand 和 3D Temporal 默认均不
+开启，因此只评测现有逐帧 Human/Face/Hand anomaly 检测：
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate human-reward
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+python scripts/run_human_reward_pairs.py \
+  --selection-manifest /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion_origin/outputs/minimax_h3_turbo_wuda_v4_ema_8step_736x416_pair_ranking_100_seed20260817/selection_manifest.json \
+  --output outputs/minimax_h3_pair_ranking_100_frame_anomaly \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
+```
+
+先运行一个 pair 的 smoke test：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+python scripts/run_human_reward_pairs.py \
+  --selection-manifest /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion_origin/outputs/minimax_h3_turbo_wuda_v4_ema_8step_736x416_pair_ranking_100_seed20260817/selection_manifest.json \
+  --output outputs/minimax_h3_pair_ranking_frame_anomaly_smoke \
+  --max-pairs 1 \
+  --device cuda:0
+```
+
+输出目录包含：
+
+```text
+human_reward_pairs_full.json
+human_reward_pairs_scores.json
+human_reward_pair_frame_evaluation.json
+human_reward_pair_evaluation.json
+```
+
+`human_reward_pair_frame_evaluation.json` 保留每个检测人物帧的 Human、Face、
+Hand abnormal probability、combined probability 和官方二值 `person_abnormal`。
+`human_reward_pair_evaluation.json` 是去掉逐帧明细后的精简统计，分别报告每个
+指标的 GT win、render win、tie、不可比较数量、严格准确率和 tie-aware 准确率。
+所有 `quality_score` 都是越高越好；Face/Hand 未检测到时保持中性，不会被填成
+正常或异常。GT/render 视频帧数可以不同，因此比较的是各视频人物帧观测的聚合
+分布，不会假设两个视频的 frame index 具有严格一一语义对应关系。
+
+### 另一节点：每完成一对立即保存的增量运行
+
+增量入口每完成一个完整的 GT/render pair 就原子更新结果和截至当前的准确率。
+它使用独立文件名，不会覆盖上面的全量 runner 输出；指定的输出目录如果已有
+增量文件，默认也会拒绝运行，必须显式使用 `--resume` 才能续跑。
+
+在另一 GPU 节点首次运行时，请使用一个新的输出目录：
+
+```bash
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate human-reward
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 NO_ALBUMENTATIONS_UPDATE=1 \
+python scripts/run_human_reward_pairs_incremental.py \
+  --selection-manifest /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion_origin/outputs/minimax_h3_turbo_wuda_v4_ema_8step_736x416_pair_ranking_100_seed20260817/selection_manifest.json \
+  --output outputs/minimax_h3_pair_ranking_100_frame_anomaly_incremental_node2 \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32
+```
+
+任务中断后使用完全相同的输出目录续跑：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 NO_ALBUMENTATIONS_UPDATE=1 \
+python scripts/run_human_reward_pairs_incremental.py \
+  --selection-manifest /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion_origin/outputs/minimax_h3_turbo_wuda_v4_ema_8step_736x416_pair_ranking_100_seed20260817/selection_manifest.json \
+  --output outputs/minimax_h3_pair_ranking_100_frame_anomaly_incremental_node2 \
+  --device cuda:0 \
+  --vbench-clip-model /gemini/platform/public/aigc/human_guozz2/code/lyh/job/VBench/VBench-2.0/.cache/huggingface/openai/clip-vit-base-patch32 \
+  --resume
+```
+
+随时查看已完成数量和当前各项准确率：
+
+```bash
+python -m json.tool \
+  outputs/minimax_h3_pair_ranking_100_frame_anomaly_incremental_node2/human_reward_pairs_incremental_progress.json
+```
+
+增量目录包含：
+
+```text
+human_reward_pairs_incremental_full.json
+human_reward_pairs_incremental_scores.json
+human_reward_pair_incremental_frame_evaluation.json
+human_reward_pair_incremental_evaluation.json
+human_reward_pairs_incremental_progress.json
+```
+
+注意：为保证每个 pair 结束即可得到 Human/Face/Hand 完整结果，当前增量入口按
+pair 调用现有低显存 pipeline，因此每对都会重新加载、释放 YOLO 和 VBench 模型。
+它比单次加载处理全部 100 对更慢，但单对失败或节点中断不会丢失之前的结果。
+# Human Temporal V2 (GVHMR, local resources only)
+
+Human Temporal V2 is optional and does not run unless `--human-temporal-3d`
+is supplied. The checkpoint and all official GVHMR preprocessing assets must
+already exist locally; HuR never downloads them.
+
+Required official GVHMR assets include at least:
+
+```text
+$GVHMR_ROOT/inputs/checkpoints/gvhmr/gvhmr_siga24_release.ckpt
+$GVHMR_ROOT/inputs/checkpoints/vitpose/vitpose-h-multi-coco.pth
+$GVHMR_ROOT/inputs/checkpoints/hmr2/epoch=10-step=25000.ckpt
+```
+
+The GVHMR body-model assets referenced by `hmr4d/utils/body_model` must also
+be installed according to the upstream GVHMR instructions.
+
+Official one-video check before HuR integration:
+
+```bash
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/GVHMR
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+python tools/demo/demo.py \
+  --video "/path/to/paired_sample/gt.mp4" \
+  --output_root /tmp/gvhmr_hur_v2_smoke \
+  --static_cam
+```
+
+Single-video HuR run:
+
+```bash
+cd /gemini/platform/public/aigc/human_guozz2/code/lyh/job/PhyMotion
+conda run -n human-reward python scripts/run_human_reward.py \
+  --video /path/to/input.mp4 \
+  --output outputs/sample_human_reward.json \
+  --device cuda:0 \
+  --human-temporal-3d \
+  --gvhmr-root /gemini/platform/public/aigc/human_guozz2/code/lyh/job/GVHMR \
+  --gvhmr-checkpoint /path/to/gvhmr_siga24_release.ckpt
+```
+
+Paired run and GT/render summary:
+
+```bash
+conda run -n human-reward python scripts/run_human_reward_pairs.py \
+  --input-dir /path/to/pairs \
+  --output outputs/human_temporal_3d_pairs \
+  --max-pairs 1 \
+  --device cuda:0 \
+  --human-temporal-3d \
+  --gvhmr-root /gemini/platform/public/aigc/human_guozz2/code/lyh/job/GVHMR \
+  --gvhmr-checkpoint /path/to/gvhmr_siga24_release.ckpt
+
+python scripts/summarize_human_temporal_pairs.py \
+  --input outputs/human_temporal_3d_pairs/human_reward_pairs_full.json \
+  --output outputs/human_temporal_3d_pairs/temporal_summary.json
+```

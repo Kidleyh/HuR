@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize person-level Human Temporal metrics from paired reward JSON."""
+"""Summarize person-level Body, Head and Hand Temporal paired metrics."""
 
 from __future__ import annotations
 
@@ -22,6 +22,17 @@ METRIC_NAMES = (
     "valid_motion_triplets",
 )
 
+TEMPORAL_METRICS = {
+    "human": ("bone_length_jump_p90", "joint_acceleration_p90"),
+    "head": ("face_shape_jump_p90", "head_motion_acceleration_p90"),
+    "hand": ("bone_length_jump_p90", "joint_acceleration_p90"),
+    "human_3d": (
+        "joint_acceleration_p90",
+        "joint_jerk_p90",
+        "root_acceleration_p90",
+    ),
+}
+
 
 def _finite_number(value: Any) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -31,13 +42,12 @@ def _finite_number(value: Any) -> Optional[float]:
 
 
 def extract_video_temporal(result: Mapping[str, Any]) -> Dict[str, Any]:
-    """Average each metric over valid persons in one video."""
+    """Average each temporal family over its valid persons in one video."""
     persons: List[Dict[str, Any]] = []
     for person in result.get("persons", []):
-        temporal = person.get("temporal", {}).get("human", {})
-        if temporal.get("valid") is not True:
-            continue
-        metrics = temporal.get("metrics", {})
+        all_temporal = person.get("temporal", {})
+        temporal = all_temporal.get("human", {})
+        metrics = temporal.get("metrics", {}) if temporal.get("valid") is True else {}
         values = {
             "bone_length_jump_mean": _finite_number(
                 metrics.get("bone_length_jump_mean")
@@ -67,8 +77,20 @@ def extract_video_temporal(result: Mapping[str, Any]) -> Dict[str, Any]:
                 temporal.get("valid_motion_triplets")
             ),
         }
+        families: Dict[str, Any] = {}
+        for family, names in TEMPORAL_METRICS.items():
+            family_result = all_temporal.get(family, {})
+            family_metrics = family_result.get("metrics", {})
+            families[family] = {
+                "valid": family_result.get("valid") is True,
+                "metrics": {
+                    name: _finite_number(family_metrics.get(name))
+                    for name in names
+                },
+            }
         persons.append({
             "logical_track_id": person.get("logical_track_id"), **values,
+            "temporal": families,
         })
     video = {
         name: (
@@ -78,7 +100,28 @@ def extract_video_temporal(result: Mapping[str, Any]) -> Dict[str, Any]:
         )
         for name in METRIC_NAMES
     }
-    return {"valid_person_count": len(persons), "metrics": video, "persons": persons}
+    family_video = {}
+    for family, names in TEMPORAL_METRICS.items():
+        family_video[family] = {
+            name: (
+                statistics.fmean(valid)
+                if (valid := [
+                    item["temporal"][family]["metrics"][name]
+                    for item in persons
+                    if item["temporal"][family]["valid"]
+                    and item["temporal"][family]["metrics"][name] is not None
+                ]) else None
+            )
+            for name in names
+        }
+    return {
+        "valid_person_count": sum(
+            item["temporal"]["human"]["valid"] for item in persons
+        ),
+        "metrics": video,
+        "temporal": family_video,
+        "persons": persons,
+    }
 
 
 def _distribution(values: Iterable[Optional[float]]) -> Dict[str, Any]:
@@ -141,9 +184,40 @@ def summarize_pairs(data: Mapping[str, Any]) -> Dict[str, Any]:
         ranked.sort(key=lambda item: (-item["difference"], str(item["name"])))
         return ranked[:10]
 
+    temporal_comparisons: Dict[str, Any] = {}
+    for family, names in TEMPORAL_METRICS.items():
+        temporal_comparisons[family] = {}
+        for metric in names:
+            gt_values = [item["gt"]["temporal"][family][metric] for item in details]
+            render_values = [
+                item["render"]["temporal"][family][metric] for item in details
+            ]
+            comparable = [
+                (item["name"], gt, render)
+                for item, gt, render in zip(details, gt_values, render_values)
+                if gt is not None and render is not None
+            ]
+            ranked = sorted(
+                ({"name": name, "difference": render - gt}
+                 for name, gt, render in comparable),
+                key=lambda item: (-item["difference"], str(item["name"])),
+            )
+            greater = sum(render > gt for _, gt, render in comparable)
+            temporal_comparisons[family][metric] = {
+                "gt": _distribution(gt_values),
+                "render": _distribution(render_values),
+                "comparable_pair_count": len(comparable),
+                "render_greater_than_gt_count": greater,
+                "render_greater_than_gt_ratio": (
+                    greater / len(comparable) if comparable else None
+                ),
+                "largest_render_minus_gt_pairs": ranked[:10],
+            }
+
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "pair_count": len(details),
+        "temporal": temporal_comparisons,
         "bone_p90": comparison("bone_length_jump_p90"),
         "motion_p90": comparison("joint_acceleration_p90"),
         "largest_render_minus_gt_bone_p90": largest("bone_p90_difference"),

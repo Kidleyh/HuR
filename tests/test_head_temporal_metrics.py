@@ -1,5 +1,6 @@
 import math
 from pathlib import Path
+import json
 
 import numpy as np
 
@@ -61,4 +62,12 @@ def test_low_confidence_and_large_gap_are_ignored(tmp_path):
     ], _config(tmp_path))
     assert result["valid_shape_pairs"] == 0
     assert result["valid_motion_triplets"] == 0
+
+
+def test_head_temporal_result_uses_json_native_scalar_types(tmp_path):
+    result = analyze_head_temporal(
+        [_record(0), _record(1), _record(2)], _config(tmp_path)
+    )
+    assert type(result["pose_frames"]) is int
+    json.dumps(result, allow_nan=False)
     assert result["score"] is None

@@ -69,6 +69,12 @@ def test_pair_cli_scores_once_and_preserves_complete_results(
     assert calls == ["init", [path.resolve() for path in expected_paths]]
     full_output = output / run_human_reward_pairs.FULL_RESULT_FILENAME
     scores_output = output / run_human_reward_pairs.SCORES_RESULT_FILENAME
+    frame_evaluation_output = (
+        output / run_human_reward_pairs.FRAME_EVALUATION_FILENAME
+    )
+    pair_evaluation_output = (
+        output / run_human_reward_pairs.PAIR_EVALUATION_FILENAME
+    )
     data = json.loads(full_output.read_text())
     assert data["schema_version"] == "1.0"
     assert data["pair_count"] == 2
@@ -86,6 +92,9 @@ def test_pair_cli_scores_once_and_preserves_complete_results(
     }
     assert "frames" not in compact["pairs"][0]["positive"]["persons"][0]
     assert not list(output.glob(".*.tmp"))
+    assert frame_evaluation_output.is_file()
+    assert pair_evaluation_output.is_file()
+    assert json.loads(frame_evaluation_output.read_text())["temporal_enabled"] is False
 
 
 def test_discovery_rejects_incomplete_pair(tmp_path):
@@ -94,6 +103,49 @@ def test_discovery_rejects_incomplete_pair(tmp_path):
     (directory / "gt.mp4").write_bytes(b"gt")
     with pytest.raises(ValueError, match="incomplete: missing render.mp4"):
         run_human_reward_pairs.discover_video_pairs(tmp_path / "pairs")
+
+
+def test_selection_manifest_preserves_selected_order_and_ignores_other_pairs(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "all_pairs"
+    ignored = _make_pair(root, "ignored")
+    second = _make_pair(root, "second")
+    first = _make_pair(root, "first")
+    manifest = tmp_path / "selection_manifest.json"
+    manifest.write_text(json.dumps({
+        "data_root": str(root),
+        "selected_pairs": [{"folder": "second"}, {"folder": "first"}],
+    }))
+    output = tmp_path / "result"
+    calls = []
+
+    class Model:
+        def __init__(self, config):
+            pass
+
+        def score_batch(self, video_paths):
+            paths = list(video_paths)
+            calls.append(paths)
+            return [_full_result(path) for path in paths]
+
+    monkeypatch.setattr(run_human_reward_pairs, "HumanRewardModel", Model)
+    assert run_human_reward_pairs.main([
+        "--selection-manifest", str(manifest),
+        "--output", str(output),
+        "--device", "cpu",
+    ]) == 0
+
+    assert calls == [[
+        (second / "gt.mp4").resolve(), (second / "render.mp4").resolve(),
+        (first / "gt.mp4").resolve(), (first / "render.mp4").resolve(),
+    ]]
+    assert ignored.resolve() not in calls[0]
+    result = json.loads(
+        (output / run_human_reward_pairs.FULL_RESULT_FILENAME).read_text()
+    )
+    assert [pair["name"] for pair in result["pairs"]] == ["second", "first"]
+    assert result["selection_manifest"] == str(manifest.resolve())
 
 
 def test_build_paired_result_rejects_result_count_mismatch(tmp_path):

@@ -324,6 +324,79 @@ def test_score_delegates_to_single_element_batch(tmp_path, monkeypatch):
     assert calls == [[video]]
 
 
+def test_human_temporal_3d_reuses_one_engine_and_preserves_reward(tmp_path):
+    videos = [tmp_path / "first.mp4", tmp_path / "second.mp4"]
+    for video in videos:
+        video.write_bytes(b"video")
+    gvhmr_root = tmp_path / "GVHMR"
+    gvhmr_root.mkdir()
+    gvhmr_checkpoint = tmp_path / "gvhmr.ckpt"
+    gvhmr_checkpoint.write_bytes(b"checkpoint")
+    events = []
+
+    class Tracker:
+        def __init__(self, **kwargs):
+            pass
+
+        def track_video_in_memory(self, source):
+            return tracking_result(Path(source))
+
+    class Anomaly:
+        def __init__(self, **kwargs):
+            pass
+
+        def score_video(self, source, entries):
+            return [
+                {
+                    "frame_index": item.frame_index,
+                    "logical_track_id": item.logical_track_id,
+                    "human": {"scored": True, "abnormal": False},
+                    "faces": [], "hands": [], "person_abnormal": False,
+                }
+                for item in entries
+            ]
+
+        def close(self):
+            pass
+
+    class Temporal3D:
+        def __init__(self, config, device):
+            events.append("init_3d")
+
+        def score_video(self, video, persons, **kwargs):
+            events.append(f"score_3d:{Path(video).stem}")
+            for person in persons:
+                person.setdefault("temporal", {})["human_3d"] = {
+                    "valid": True, "metrics": {}, "score": None,
+                }
+
+        def close(self):
+            events.append("close_3d")
+
+    enabled = replace(
+        config(tmp_path),
+        human_temporal_3d=True,
+        gvhmr_root=gvhmr_root,
+        gvhmr_checkpoint=gvhmr_checkpoint,
+    )
+    results = HumanRewardModel(
+        enabled,
+        tracker_factory=Tracker,
+        anomaly_engine_factory=Anomaly,
+        temporal_3d_engine_factory=Temporal3D,
+        stitcher=lambda data, cfg: SimpleNamespace(
+            track_id_to_logical_track_id={1: 0}
+        ),
+        release_callback=lambda: None,
+    ).score_batch(videos)
+    assert events == ["init_3d", "score_3d:first", "score_3d:second", "close_3d"]
+    assert [result["reward"] for result in results] == [1.0, 1.0]
+    assert all(
+        result["persons"][0]["temporal"]["human_3d"]["score"] is None
+        for result in results
+    )
+
+
 def test_visualization_runs_after_model_release_without_reinference(tmp_path):
     video = tmp_path / "input.mp4"
     video.write_bytes(b"video")

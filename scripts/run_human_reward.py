@@ -50,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--{prefix}-temporal-max-frame-gap", type=int, default=2)
     parser.add_argument("--hand-temporal-wrist-threshold", type=float, default=0.3)
     parser.add_argument("--hand-temporal-max-wrist-distance", type=float, default=1.5)
+    parser.add_argument("--human-temporal-3d", action="store_true")
+    parser.add_argument("--gvhmr-root")
+    parser.add_argument("--gvhmr-checkpoint")
+    parser.add_argument("--human-temporal-3d-min-valid-joints", type=int, default=1)
     return parser
 
 
@@ -108,6 +112,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         hand_temporal_max_frame_gap=args.hand_temporal_max_frame_gap,
         hand_temporal_wrist_threshold=args.hand_temporal_wrist_threshold,
         hand_temporal_max_wrist_distance=args.hand_temporal_max_wrist_distance,
+        human_temporal_3d=args.human_temporal_3d,
+        gvhmr_root=Path(args.gvhmr_root) if args.gvhmr_root else None,
+        gvhmr_checkpoint=(
+            Path(args.gvhmr_checkpoint) if args.gvhmr_checkpoint else None
+        ),
+        human_temporal_3d_min_valid_joints=(
+            args.human_temporal_3d_min_valid_joints
+        ),
     )
     model = HumanRewardModel(config)
     result = (

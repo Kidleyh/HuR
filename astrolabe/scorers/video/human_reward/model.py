@@ -29,6 +29,11 @@ from astrolabe.scorers.video.human_temporal.schema import (
     failed_part_temporal_result,
     failed_human_temporal_result,
 )
+from astrolabe.scorers.video.human_temporal_3d.engine import GVHMRTemporalEngine
+from astrolabe.scorers.video.human_temporal_3d.schema import (
+    GVHMRTemporalConfig,
+    failed_human_3d_result,
+)
 from astrolabe.scorers.video.person_tracking.tracker import YOLOByteTrackPersonTracker
 from astrolabe.scorers.video.tracklet_stitching.io import tracking_input_from_result
 from astrolabe.scorers.video.tracklet_stitching.schemas import StitchingConfig
@@ -81,6 +86,10 @@ class HumanRewardConfig:
     hand_temporal_max_frame_gap: int = 2
     hand_temporal_wrist_threshold: float = 0.3
     hand_temporal_max_wrist_distance: float = 1.5
+    human_temporal_3d: bool = False
+    gvhmr_root: Optional[Path] = None
+    gvhmr_checkpoint: Optional[Path] = None
+    human_temporal_3d_min_valid_joints: int = 1
 
     def __post_init__(self) -> None:
         for name in ("yolo_weights", "tracker_config", "stitching_config", "vbench_root"):
@@ -97,6 +106,7 @@ class HumanRewardConfig:
             "human_temporal_pose_config", "human_temporal_pose_checkpoint",
             "head_temporal_pose_config", "head_temporal_pose_checkpoint",
             "hand_temporal_pose_config", "hand_temporal_pose_checkpoint",
+            "gvhmr_root", "gvhmr_checkpoint",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -107,6 +117,8 @@ class HumanRewardConfig:
             raise ValueError("human_temporal must be a bool")
         if type(self.head_temporal) is not bool or type(self.hand_temporal) is not bool:
             raise ValueError("head_temporal and hand_temporal must be bools")
+        if type(self.human_temporal_3d) is not bool:
+            raise ValueError("human_temporal_3d must be a bool")
         if self.human_temporal:
             if self.human_temporal_pose_config is None:
                 raise ValueError(
@@ -147,6 +159,21 @@ class HumanRewardConfig:
                 raise ValueError(f"{prefix}_temporal_keypoint_threshold must be in [0, 1]")
             if getattr(self, f"{prefix}_temporal_max_frame_gap") < 1:
                 raise ValueError(f"{prefix}_temporal_max_frame_gap must be positive")
+        if self.human_temporal_3d:
+            if self.gvhmr_root is None:
+                raise ValueError("gvhmr_root is required when Human Temporal V2 is enabled")
+            if self.gvhmr_checkpoint is None:
+                raise ValueError(
+                    "gvhmr_checkpoint is required when Human Temporal V2 is enabled"
+                )
+            if not self.gvhmr_root.is_dir():
+                raise NotADirectoryError(f"GVHMR root does not exist: {self.gvhmr_root}")
+            if not self.gvhmr_checkpoint.is_file():
+                raise FileNotFoundError(
+                    f"GVHMR checkpoint does not exist: {self.gvhmr_checkpoint}"
+                )
+        if self.human_temporal_3d_min_valid_joints < 1:
+            raise ValueError("human_temporal_3d_min_valid_joints must be positive")
 
     @classmethod
     def from_value(
@@ -236,6 +263,7 @@ class HumanRewardModel:
         temporal_engine_factory: Optional[Callable[..., Any]] = None,
         head_temporal_engine_factory: Optional[Callable[..., Any]] = None,
         hand_temporal_engine_factory: Optional[Callable[..., Any]] = None,
+        temporal_3d_engine_factory: Optional[Callable[..., Any]] = None,
         stitcher: Optional[Callable[..., Any]] = None,
         release_callback: Optional[Callable[[], None]] = None,
         visualization_writer: Optional[Callable[..., None]] = None,
@@ -246,6 +274,9 @@ class HumanRewardModel:
         self._temporal_engine_factory = temporal_engine_factory or HumanTemporalEngine
         self._head_temporal_engine_factory = head_temporal_engine_factory or HeadTemporalEngine
         self._hand_temporal_engine_factory = hand_temporal_engine_factory or HandTemporalEngine
+        self._temporal_3d_engine_factory = (
+            temporal_3d_engine_factory or GVHMRTemporalEngine
+        )
         self._stitcher = stitcher or stitch_tracking
         self._release_callback = release_callback or _release_cuda_models
         self._visualization_writer = (
@@ -490,6 +521,49 @@ class HumanRewardModel:
                 if callable(close):
                     close()
                 part_engine = None
+                self._release_callback()
+
+        if self.config.human_temporal_3d and any(
+            result is not None and result.get("valid") is True for result in results
+        ):
+            temporal_3d_engine = None
+            try:
+                temporal_3d_engine = self._temporal_3d_engine_factory(
+                    config=GVHMRTemporalConfig(
+                        gvhmr_root=self.config.gvhmr_root,
+                        checkpoint=self.config.gvhmr_checkpoint,
+                        min_valid_joints=(
+                            self.config.human_temporal_3d_min_valid_joints
+                        ),
+                    ),
+                    device=self.config.device,
+                )
+                for index, item in enumerate(prepared):
+                    result = results[index]
+                    if item is None or result is None or result.get("valid") is not True:
+                        continue
+                    try:
+                        temporal_3d_engine.score_video(
+                            item.video,
+                            result["persons"],
+                            fps=item.fps,
+                            width=item.width,
+                            height=item.height,
+                        )
+                    except Exception as error:
+                        if _is_cuda_failure(error):
+                            raise
+                        for person in result["persons"]:
+                            person.setdefault("temporal", {})["human_3d"] = (
+                                failed_human_3d_result(
+                                    len(person["frames"]), error
+                                )
+                            )
+            finally:
+                close = getattr(temporal_3d_engine, "close", None)
+                if callable(close):
+                    close()
+                temporal_3d_engine = None
                 self._release_callback()
 
         if visualization_output is not None and visualization_ready:
